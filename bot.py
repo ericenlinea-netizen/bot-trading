@@ -31,8 +31,12 @@ max_precio_1 = 0
 en_operacion_2 = False
 precio_entrada_2 = 0
 
+# 🔥 NUEVO: control de frecuencia
+ultimo_trade = 0
+cooldown = 5  # segundos entre trades
+
 # mensaje inicial
-enviar_alerta("🤖 BOT ACTIVO 24/7 🚀")
+enviar_alerta("🤖 BOT ACTIVO 24/7 🚀 (modo optimizado)")
 
 while True:
     try:
@@ -50,23 +54,26 @@ while True:
         if len(precios) >= 10:
             rango = max(precios[-10:]) - min(precios[-10:])
             if rango < 15:
-                operar = False  # 🔥 mercado lateral → NO operar
+                operar = False  # mercado lateral
 
         # ================= BOT 1 (SEGURO) =================
         if operar and len(precios) >= 10 and not en_operacion_1:
-            rango = max(precios[-10:]) - min(precios[-10:])
-            tendencia_valida = rango > 25
+            if time.time() - ultimo_trade >= cooldown:
 
-            if tendencia_valida:
-                p1, p2, p3, p4, p5, p6 = precios[-6:]
-                max_reciente = max(precios[-10:])
+                rango = max(precios[-10:]) - min(precios[-10:])
+                tendencia_valida = rango > 25
 
-                if p6 >= max_reciente:
-                    if p1 < p2 < p3 and p4 < p3 and p5 < p4 and p6 > p5:
-                        enviar_alerta(f"🟢 BOT1 ENTRADA\nPrecio: {p6}")
-                        en_operacion_1 = True
-                        precio_entrada_1 = p6
-                        max_precio_1 = p6
+                if tendencia_valida:
+                    p1, p2, p3, p4, p5, p6 = precios[-6:]
+                    max_reciente = max(precios[-10:])
+
+                    if p6 >= max_reciente:
+                        if p1 < p2 < p3 and p4 < p3 and p5 < p4 and p6 > p5:
+                            enviar_alerta(f"🟢 BOT1 ENTRADA\nPrecio: {p6}")
+                            en_operacion_1 = True
+                            precio_entrada_1 = p6
+                            max_precio_1 = p6
+                            ultimo_trade = time.time()
 
         if en_operacion_1:
             ganancia = precio - precio_entrada_1
@@ -84,12 +91,15 @@ while True:
 
         # ================= BOT 2 (RÁPIDO) =================
         if operar and len(precios) >= 5 and not en_operacion_2:
-            p1, p2, p3, p4, p5 = precios[-5:]
+            if time.time() - ultimo_trade >= cooldown:
 
-            if p3 > p2 > p1 and p5 > p4:
-                enviar_alerta(f"⚡ BOT2 ENTRADA\nPrecio: {p5}")
-                en_operacion_2 = True
-                precio_entrada_2 = p5
+                p1, p2, p3, p4, p5 = precios[-5:]
+
+                if p3 > p2 > p1 and p5 > p4:
+                    enviar_alerta(f"⚡ BOT2 ENTRADA\nPrecio: {p5}")
+                    en_operacion_2 = True
+                    precio_entrada_2 = p5
+                    ultimo_trade = time.time()
 
         if en_operacion_2:
             ganancia = precio - precio_entrada_2
