@@ -1,6 +1,5 @@
 import requests
 import time
-enviar_alerta("🔥 PRUEBA BOT FUNCIONANDO")
 
 # ================= TELEGRAM =================
 TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
@@ -18,6 +17,9 @@ def enviar_alerta(mensaje):
     except:
         pass
 
+# ✅ AHORA SÍ puedes usarla
+enviar_alerta("🔥 BOT INICIADO CORRECTAMENTE")
+
 # ================= BINANCE =================
 url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
 
@@ -32,9 +34,6 @@ max_precio_1 = 0
 en_operacion_2 = False
 precio_entrada_2 = 0
 
-# mensaje inicial
-enviar_alerta("🤖 BOT INICIADO Y FUNCIONANDO 24/7")
-
 while True:
     try:
         response = requests.get(url)
@@ -46,7 +45,7 @@ while True:
         if len(precios) > 20:
             precios.pop(0)
 
-        # ================= BOT 1 (SEGURO) =================
+        # ================= BOT 1 =================
         if len(precios) >= 10 and not en_operacion_1:
             rango = max(precios[-10:]) - min(precios[-10:])
             tendencia_valida = rango > 25
@@ -68,7 +67,6 @@ while True:
             if precio > max_precio_1:
                 max_precio_1 = precio
 
-            # trailing stop
             if max_precio_1 - precio >= 4 and ganancia > 6:
                 enviar_alerta(f"💰 BOT1 SALIDA en {precio} (+{ganancia})")
                 en_operacion_1 = False
@@ -77,7 +75,7 @@ while True:
                 enviar_alerta(f"🛑 BOT1 STOP en {precio} ({ganancia})")
                 en_operacion_1 = False
 
-        # ================= BOT 2 (RÁPIDO) =================
+        # ================= BOT 2 =================
         if len(precios) >= 5 and not en_operacion_2:
             p1, p2, p3, p4, p5 = precios[-5:]
 
