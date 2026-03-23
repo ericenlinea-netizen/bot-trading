@@ -1,5 +1,6 @@
 import requests
 import time
+enviar_alerta("🔥 PRUEBA BOT FUNCIONANDO")
 
 # ================= TELEGRAM =================
 TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
