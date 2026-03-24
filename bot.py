@@ -24,7 +24,7 @@ ultimo_trade = 0
 racha_perdidas = 0
 ultima_perdida = False
 
-enviar_alerta("🚀 BOT MULTI-CRIPTO ACTIVO")
+enviar_alerta("🚀 BOT MULTI-CRIPTO ACTIVO (modo equilibrado)")
 
 while True:
     try:
@@ -42,33 +42,34 @@ while True:
             if len(precios[symbol]) < 15:
                 continue
 
-            # ================= FILTRO VOLATILIDAD =================
-            rango = max(precios[symbol][-10:]) - min(precios[symbol][-10:])
-            if rango < 0.2:  # ajustado para varias criptos
+            p = precios[symbol]
+
+            # ================= FILTRO VOLATILIDAD (AJUSTADO) =================
+            rango = max(p[-10:]) - min(p[-10:])
+            if rango < (0.0005 * precio):
                 continue
 
-            # ================= COOLDOWN GLOBAL =================
-            cooldown = 12 if ultima_perdida else 6
+            # ================= COOLDOWN DINÁMICO =================
+            cooldown = 8 if ultima_perdida else 4
             if time.time() - ultimo_trade < cooldown:
                 continue
 
-            # ================= BLOQUEO =================
+            # ================= BLOQUEO POR RACHAS =================
             if racha_perdidas >= 3:
                 enviar_alerta("⛔ PAUSA GLOBAL POR PERDIDAS")
-                time.sleep(20)
+                time.sleep(15)
                 racha_perdidas = 0
                 continue
 
             # ================= ENTRADA =================
             if not estado[symbol]:
 
-                p = precios[symbol]
-
                 tendencia = p[-1] > p[-2] > p[-3]
-                impulso = (p[-1] - p[-5]) > (0.001 * p[-1])
+                impulso = (p[-1] - p[-5]) > (0.0005 * precio)
                 retroceso = p[-2] > p[-3] and p[-1] > p[-2]
+
                 maximo = max(p[-10:])
-                no_pico = p[-1] < maximo * 0.999
+                no_pico = p[-1] < maximo * 0.9995
 
                 if tendencia and impulso and retroceso and no_pico:
                     entrada[symbol] = precio
@@ -86,10 +87,16 @@ while True:
                 if precio > max_precio[symbol]:
                     max_precio[symbol] = precio
 
-                trailing = 0.002 * precio
+                trailing = 0.0015 * precio  # más ajustado
 
                 if max_precio[symbol] - precio >= trailing and ganancia > 0:
                     enviar_alerta(f"💰 {symbol}\nSALIDA: {precio}\n+{ganancia}")
+                    estado[symbol] = False
+                    ultima_perdida = False
+                    racha_perdidas = 0
+
+                elif ganancia >= (0.003 * precio):
+                    enviar_alerta(f"💰 {symbol}\nTAKE PROFIT\n{precio}\n+{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = False
                     racha_perdidas = 0
