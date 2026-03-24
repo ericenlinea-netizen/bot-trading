@@ -13,7 +13,7 @@ def enviar_alerta(msg):
         pass
 
 # ================= CONFIG =================
-symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
+symbols = ["BTCUSDT", "ETHUSDT"]
 
 precios = {s: [] for s in symbols}
 estado = {s: False for s in symbols}
@@ -24,7 +24,7 @@ ultimo_trade = 0
 racha_perdidas = 0
 ultima_perdida = False
 
-enviar_alerta("🚀 BOT MULTI-CRIPTO ACTIVO (modo equilibrado)")
+enviar_alerta("🔥 BOT PRO OPTIMIZADO (BTC + ETH)")
 
 while True:
     try:
@@ -36,40 +36,46 @@ while True:
 
             precios[symbol].append(precio)
 
-            if len(precios[symbol]) > 40:
+            if len(precios[symbol]) > 50:
                 precios[symbol].pop(0)
 
-            if len(precios[symbol]) < 15:
+            if len(precios[symbol]) < 20:
                 continue
 
             p = precios[symbol]
 
-            # ================= FILTRO VOLATILIDAD (AJUSTADO) =================
-            rango = max(p[-10:]) - min(p[-10:])
-            if rango < (0.0005 * precio):
+            # ================= FILTRO VOLATILIDAD =================
+            rango = max(p[-15:]) - min(p[-15:])
+            if rango < (0.001 * precio):
                 continue
 
-            # ================= COOLDOWN DINÁMICO =================
-            cooldown = 8 if ultima_perdida else 4
+            # ================= COOLDOWN =================
+            cooldown = 10 if ultima_perdida else 5
             if time.time() - ultimo_trade < cooldown:
                 continue
 
-            # ================= BLOQUEO POR RACHAS =================
+            # ================= BLOQUEO POR PERDIDAS =================
             if racha_perdidas >= 3:
-                enviar_alerta("⛔ PAUSA GLOBAL POR PERDIDAS")
-                time.sleep(15)
+                enviar_alerta("⛔ PAUSA POR PERDIDAS")
+                time.sleep(20)
                 racha_perdidas = 0
                 continue
 
             # ================= ENTRADA =================
             if not estado[symbol]:
 
-                tendencia = p[-1] > p[-2] > p[-3]
-                impulso = (p[-1] - p[-5]) > (0.0005 * precio)
-                retroceso = p[-2] > p[-3] and p[-1] > p[-2]
+                # tendencia fuerte
+                tendencia = p[-1] > p[-2] > p[-3] > p[-4]
 
-                maximo = max(p[-10:])
-                no_pico = p[-1] < maximo * 0.9995
+                # impulso real más fuerte
+                impulso = (p[-1] - p[-6]) > (0.0008 * precio)
+
+                # retroceso controlado
+                retroceso = p[-3] > p[-4] and p[-1] > p[-2]
+
+                # evitar entrar en máximos extremos
+                maximo = max(p[-15:])
+                no_pico = p[-1] < maximo * 0.998
 
                 if tendencia and impulso and retroceso and no_pico:
                     entrada[symbol] = precio
@@ -87,21 +93,28 @@ while True:
                 if precio > max_precio[symbol]:
                     max_precio[symbol] = precio
 
-                trailing = 0.0015 * precio  # más ajustado
+                # trailing dinámico (más inteligente)
+                if ganancia > (0.003 * precio):
+                    trailing = 0.0015 * precio
+                else:
+                    trailing = 0.002 * precio
 
+                # salida por trailing
                 if max_precio[symbol] - precio >= trailing and ganancia > 0:
                     enviar_alerta(f"💰 {symbol}\nSALIDA: {precio}\n+{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = False
                     racha_perdidas = 0
 
-                elif ganancia >= (0.003 * precio):
-                    enviar_alerta(f"💰 {symbol}\nTAKE PROFIT\n{precio}\n+{ganancia}")
+                # take profit grande
+                elif ganancia >= (0.006 * precio):
+                    enviar_alerta(f"💰 {symbol}\nTAKE PROFIT GRANDE\n{precio}\n+{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = False
                     racha_perdidas = 0
 
-                elif ganancia <= -(0.0015 * precio):
+                # stop loss
+                elif ganancia <= -(0.002 * precio):
                     enviar_alerta(f"🛑 {symbol}\nSTOP: {precio}\n{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = True
