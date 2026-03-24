@@ -5,11 +5,10 @@ import time
 TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
 CHAT_ID = "5019372975"
 
-def enviar_alerta(mensaje):
+def enviar_alerta(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": mensaje}
     try:
-        requests.post(url, data=payload)
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
     except:
         pass
 
@@ -18,18 +17,17 @@ url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
 
 precios = []
 
-# estados
-en_operacion = False
-precio_entrada = 0
+# estado
+en_trade = False
+entrada = 0
 max_precio = 0
 
-# control inteligente
+# control
 ultimo_trade = 0
-cooldown = 5
-ultima_fue_perdida = False
 racha_perdidas = 0
+ultima_perdida = False
 
-enviar_alerta("🤖 BOT PRO ACTIVO 🚀")
+enviar_alerta("🔥 BOT PRO V2 ACTIVO")
 
 while True:
     try:
@@ -37,79 +35,83 @@ while True:
         precio = float(data["price"])
         precios.append(precio)
 
-        if len(precios) > 30:
+        if len(precios) > 40:
             precios.pop(0)
 
-        # ================= FILTRO DE VOLATILIDAD =================
-        operar = True
-        if len(precios) >= 10:
-            rango = max(precios[-10:]) - min(precios[-10:])
-            if rango < 20:
-                operar = False
+        if len(precios) < 15:
+            time.sleep(1)
+            continue
 
-        # ================= COOLDOWN DINÁMICO =================
-        if ultima_fue_perdida:
-            cooldown = 10
-        else:
-            cooldown = 5
+        # ================= FILTRO VOLATILIDAD =================
+        rango = max(precios[-10:]) - min(precios[-10:])
+        if rango < 25:
+            time.sleep(1)
+            continue
 
+        # ================= COOLDOWN =================
+        cooldown = 12 if ultima_perdida else 6
         if time.time() - ultimo_trade < cooldown:
             time.sleep(1)
             continue
 
-        # ================= CONTROL DE RACHAS =================
+        # ================= BLOQUEO POR PERDIDAS =================
         if racha_perdidas >= 3:
-            enviar_alerta("⛔ PAUSA POR RACHAS NEGATIVAS")
-            time.sleep(15)
+            enviar_alerta("⛔ BLOQUEO TEMPORAL (rachas)")
+            time.sleep(20)
             racha_perdidas = 0
             continue
 
-        # ================= ENTRADA =================
-        if operar and len(precios) >= 6 and not en_operacion:
+        # ================= ENTRADA INTELIGENTE =================
+        if not en_trade:
 
-            p1, p2, p3, p4, p5, p6 = precios[-6:]
+            # tendencia fuerte
+            tendencia = precios[-1] > precios[-2] > precios[-3] > precios[-4]
 
-            # tendencia clara
-            tendencia = p6 > p5 > p4
+            # impulso fuerte
+            impulso = (precios[-1] - precios[-5]) > 12
 
-            # impulso real
-            impulso = (p6 - p3) > 8
+            # retroceso (clave para duplicar ganancias)
+            retroceso = precios[-2] > precios[-3] and precios[-1] > precios[-2]
 
-            # anti-FOMO (no entrar en máximos extremos)
-            max_reciente = max(precios[-10:])
-            no_fomo = p6 < max_reciente - 2
+            # evitar picos
+            maximo = max(precios[-10:])
+            no_pico = precios[-1] < maximo - 3
 
-            if tendencia and impulso and no_fomo:
-                enviar_alerta(f"🚀 ENTRADA LONG\nPrecio: {p6}")
-                en_operacion = True
-                precio_entrada = p6
-                max_precio = p6
+            if tendencia and impulso and retroceso and no_pico:
+                entrada = precio
+                max_precio = precio
+                en_trade = True
                 ultimo_trade = time.time()
 
-        # ================= GESTIÓN =================
-        if en_operacion:
-            ganancia = precio - precio_entrada
+                enviar_alerta(f"🚀 ENTRADA PRO\n{precio}")
+
+        # ================= GESTIÓN AVANZADA =================
+        if en_trade:
+
+            ganancia = precio - entrada
 
             if precio > max_precio:
                 max_precio = precio
 
-            # trailing mejorado
-            if max_precio - precio >= 5 and ganancia > 6:
-                enviar_alerta(f"💰 GANANCIA\nSalida: {precio}\n+{ganancia}")
-                en_operacion = False
-                ultima_fue_perdida = False
+            # trailing dinámico (DEJA CORRER GANANCIAS)
+            trailing = 6 if ganancia > 15 else 4
+
+            if max_precio - precio >= trailing and ganancia > 8:
+                enviar_alerta(f"💰 TRAILING EXIT\n{precio}\n+{ganancia}")
+                en_trade = False
+                ultima_perdida = False
                 racha_perdidas = 0
 
-            elif ganancia >= 12:
-                enviar_alerta(f"💰 TAKE PROFIT\nSalida: {precio}\n+{ganancia}")
-                en_operacion = False
-                ultima_fue_perdida = False
+            elif ganancia >= 25:
+                enviar_alerta(f"💰 TAKE PROFIT GRANDE\n{precio}\n+{ganancia}")
+                en_trade = False
+                ultima_perdida = False
                 racha_perdidas = 0
 
             elif ganancia <= -10:
-                enviar_alerta(f"🛑 STOP LOSS\nSalida: {precio}\n{ganancia}")
-                en_operacion = False
-                ultima_fue_perdida = True
+                enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
+                en_trade = False
+                ultima_perdida = True
                 racha_perdidas += 1
 
         time.sleep(1)
