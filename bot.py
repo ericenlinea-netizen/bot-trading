@@ -18,13 +18,11 @@ symbols = ["BTCUSDT", "ETHUSDT"]
 precios = {s: [] for s in symbols}
 estado = {s: False for s in symbols}
 entrada = {s: 0 for s in symbols}
-max_precio = {s: 0 for s in symbols}
 
 ultimo_trade = 0
-racha_perdidas = 0
 ultima_perdida = False
 
-enviar_alerta("🚀 BOT PRO+ EQUILIBRADO ACTIVO")
+enviar_alerta("🔥 BOT SCALPING ACTIVO")
 
 while True:
     try:
@@ -35,49 +33,30 @@ while True:
 
             precios[symbol].append(precio)
 
-            if len(precios[symbol]) > 50:
+            if len(precios[symbol]) > 30:
                 precios[symbol].pop(0)
 
-            if len(precios[symbol]) < 20:
+            if len(precios[symbol]) < 10:
                 continue
 
             p = precios[symbol]
 
-            # 🔥 FILTRO VOLATILIDAD (más flexible)
-            rango = max(p[-15:]) - min(p[-15:])
-            if rango < (0.001 * precio):
-                continue
-
-            # 🔥 DIRECCIÓN (menos exigente)
-            direccion = abs(p[-1] - p[-10])
-            if direccion < (0.0007 * precio):
-                continue
-
-            # 🔥 COOLDOWN
-            cooldown = 10 if ultima_perdida else 5
+            # ================= COOLDOWN =================
+            cooldown = 6 if ultima_perdida else 3
             if time.time() - ultimo_trade < cooldown:
                 continue
 
-            # 🔥 CONTROL DE RACHAS
-            if racha_perdidas >= 3:
-                enviar_alerta("⛔ PAUSA POR PERDIDAS")
-                time.sleep(20)
-                racha_perdidas = 0
-                continue
-
-            # ================= ENTRADA =================
+            # ================= ENTRADA SIMPLE =================
             if not estado[symbol]:
 
-                tendencia = p[-1] > p[-2] > p[-3]
-                impulso = (p[-1] - p[-6]) > (0.0007 * precio)
-                retroceso = p[-2] > p[-3] and p[-1] > p[-2]
+                # micro tendencia
+                tendencia = p[-1] > p[-2]
 
-                maximo = max(p[-15:])
-                no_pico = p[-1] < maximo * 0.999
+                # pequeño impulso
+                impulso = (p[-1] - p[-3]) > (0.0003 * precio)
 
-                if tendencia and impulso and retroceso and no_pico:
+                if tendencia and impulso:
                     entrada[symbol] = precio
-                    max_precio[symbol] = precio
                     estado[symbol] = True
                     ultimo_trade = time.time()
 
@@ -88,28 +67,18 @@ while True:
 
                 ganancia = precio - entrada[symbol]
 
-                if precio > max_precio[symbol]:
-                    max_precio[symbol] = precio
+                tp = 0.002 * precio
+                sl = 0.0015 * precio
 
-                trailing = 0.002 * precio
-
-                if max_precio[symbol] - precio >= trailing and ganancia > 0:
-                    enviar_alerta(f"💰 {symbol}\nSALIDA: {precio}\n+{ganancia}")
+                if ganancia >= tp:
+                    enviar_alerta(f"💰 {symbol}\nGANANCIA\n{precio}\n+{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = False
-                    racha_perdidas = 0
 
-                elif ganancia >= (0.006 * precio):
-                    enviar_alerta(f"💰 {symbol}\nTAKE PROFIT\n{precio}\n+{ganancia}")
-                    estado[symbol] = False
-                    ultima_perdida = False
-                    racha_perdidas = 0
-
-                elif ganancia <= -(0.002 * precio):
-                    enviar_alerta(f"🛑 {symbol}\nSTOP: {precio}\n{ganancia}")
+                elif ganancia <= -sl:
+                    enviar_alerta(f"🛑 {symbol}\nSTOP\n{precio}\n{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = True
-                    racha_perdidas += 1
 
         time.sleep(1)
 
