@@ -15,7 +15,7 @@ def enviar_alerta(msg):
         pass
 
 # ================= CONFIG =================
-symbols = ["BTCUSDT", "ETHUSDT"]
+symbols = ["ETHUSDT", "BNBUSDT", "SOLUSDT"]
 
 precios = {s: [] for s in symbols}
 estado = {s: False for s in symbols}
@@ -26,7 +26,7 @@ ultimo_trade = 0
 ultima_perdida = False
 racha_perdidas = 0
 
-enviar_alerta("🔥 BOT SCALPING PRO ACTIVO (BTC + ETH OPTIMIZADO)")
+enviar_alerta("🔥 BOT PRO MULTI-CRIPTO ACTIVO (ETH + BNB + SOL)")
 
 while True:
     try:
@@ -48,6 +48,11 @@ while True:
 
             p = precios[symbol]
 
+            # ================= FILTRO MERCADO =================
+            rango = max(p[-10:]) - min(p[-10:])
+            if rango < (0.0008 * precio):
+                continue
+
             # ================= COOLDOWN =================
             cooldown = 8 if ultima_perdida else 5
             if time.time() - ultimo_trade < cooldown:
@@ -64,9 +69,13 @@ while True:
             if not estado[symbol]:
 
                 tendencia = p[-1] > p[-2]
-                impulso = (p[-1] - p[-3]) > (0.0003 * precio)
+                impulso = (p[-1] - p[-4]) > (0.0005 * precio)
 
-                if tendencia and impulso:
+                # evitar entrar en picos
+                maximo = max(p[-10:])
+                no_pico = p[-1] < maximo * 0.999
+
+                if tendencia and impulso and no_pico:
                     entrada[symbol] = precio
                     max_precio[symbol] = precio
                     estado[symbol] = True
@@ -82,17 +91,21 @@ while True:
                 if precio > max_precio[symbol]:
                     max_precio[symbol] = precio
 
-                # 🔥 CONFIG DIFERENTE POR ACTIVO
-                if symbol == "BTCUSDT":
-                    tp = 0.004 * precio     # más amplio
-                    sl = 0.0025 * precio   # evita stops bruscos
-                else:  # ETH
-                    tp = 0.002 * precio
-                    sl = 0.0015 * precio
+                # 🔥 CONFIG GLOBAL OPTIMIZADA
+                tp = 0.0025 * precio
+                sl = 0.0018 * precio
 
-                # ================= SALIDAS =================
-                if ganancia >= tp:
-                    enviar_alerta(f"💰 {symbol}\nGANANCIA\n{precio}\n+{ganancia}")
+                trailing = 0.0015 * precio
+
+                # trailing stop (deja correr ganancias)
+                if max_precio[symbol] - precio >= trailing and ganancia > 0:
+                    enviar_alerta(f"💰 {symbol}\nSALIDA TRAILING\n{precio}\n+{ganancia}")
+                    estado[symbol] = False
+                    ultima_perdida = False
+                    racha_perdidas = 0
+
+                elif ganancia >= tp:
+                    enviar_alerta(f"💰 {symbol}\nTAKE PROFIT\n{precio}\n+{ganancia}")
                     estado[symbol] = False
                     ultima_perdida = False
                     racha_perdidas = 0
