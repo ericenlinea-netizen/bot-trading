@@ -24,9 +24,8 @@ max_precio = 0
 
 ultimo_trade = 0
 ultima_perdida = False
-racha_perdidas = 0
 
-enviar_alerta("🚀 BOT PRO FINAL ACTIVO (ANTI-LATERAL + SCALPING INTELIGENTE)")
+enviar_alerta("🔥 BOT ACTIVO (BALANCE PERFECTO)")
 
 while True:
     try:
@@ -37,47 +36,28 @@ while True:
         precio = float(data["price"])
         precios.append(precio)
 
-        if len(precios) > 30:
+        if len(precios) > 20:
             precios.pop(0)
 
-        if len(precios) < 10:
+        if len(precios) < 6:
             time.sleep(1)
             continue
 
         p = precios
 
-        # ================= DETECTOR DE MERCADO =================
-        rango = max(p[-10:]) - min(p[-10:])
-
-        if rango < (0.001 * precio):
-            # mercado lateral → NO operar
-            time.sleep(1)
-            continue
-
         # ================= COOLDOWN =================
-        cooldown = 8 if ultima_perdida else 4
+        cooldown = 4 if not ultima_perdida else 6
         if time.time() - ultimo_trade < cooldown:
             time.sleep(1)
-            continue
-
-        # ================= CONTROL DE RACHAS =================
-        if racha_perdidas >= 3:
-            enviar_alerta("⛔ PAUSA POR MERCADO NEGATIVO")
-            time.sleep(30)
-            racha_perdidas = 0
             continue
 
         # ================= ENTRADA =================
         if not estado:
 
-            tendencia = p[-1] > p[-2] > p[-3]
-            impulso = (p[-1] - p[-5]) > (0.0008 * precio)
+            subida_corta = p[-1] > p[-2]
+            impulso = (p[-1] - p[-3]) > (0.0002 * precio)
 
-            # evitar comprar en el pico
-            maximo = max(p[-10:])
-            no_pico = p[-1] < maximo * 0.998
-
-            if tendencia and impulso and no_pico:
+            if subida_corta and impulso:
                 entrada = precio
                 max_precio = precio
                 estado = True
@@ -93,34 +73,25 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            # dinámica según fuerza del movimiento
-            if rango > (0.002 * precio):
-                tp = 0.004 * precio
-                trailing = 0.0015 * precio
-            else:
-                tp = 0.0025 * precio
-                trailing = 0.0012 * precio
+            tp = 0.002 * precio
+            sl = 0.0017 * precio
+            trailing = 0.001 * precio
 
-            sl = 0.0018 * precio
-
-            # trailing stop (deja correr)
+            # trailing
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
                 ultima_perdida = False
-                racha_perdidas = 0
 
             elif ganancia >= tp:
-                enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
+                enviar_alerta(f"💰 TP\n{precio}\n+{ganancia}")
                 estado = False
                 ultima_perdida = False
-                racha_perdidas = 0
 
             elif ganancia <= -sl:
-                enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
+                enviar_alerta(f"🛑 SL\n{precio}\n{ganancia}")
                 estado = False
                 ultima_perdida = True
-                racha_perdidas += 1
 
         time.sleep(1)
 
