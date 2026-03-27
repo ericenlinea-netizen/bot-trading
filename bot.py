@@ -22,7 +22,7 @@ entrada = 0
 max_precio = 0
 ultimo_trade = 0
 
-enviar_alerta("🔥 BOT FINAL PRO (VELAS + FILTRO ANTI-PICO) ACTIVO")
+enviar_alerta("🔥 BOT FINAL PRO (RIESGO OPTIMIZADO) ACTIVO")
 
 while True:
     try:
@@ -39,13 +39,12 @@ while True:
             time.sleep(2)
             continue
 
-        # ================= DETECTAR MOMENTUM =================
+        # ================= MOMENTUM REAL =================
         velas_suben = cierres[-1] > cierres[-2] > cierres[-3]
         impulso = (cierres[-1] - cierres[-4]) > (0.0005 * precio)
 
         # ================= FILTRO ANTI-PICO =================
         subida_total = (cierres[-1] - cierres[-6]) / precio
-
         if subida_total > 0.003:
             time.sleep(2)
             continue
@@ -69,11 +68,12 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            tp = 0.003 * precio
-            sl = 0.002 * precio
-            trailing = 0.0015 * precio
+            # 🔥 CONFIG CLAVE (RIESGO CORREGIDO)
+            tp = 0.004 * precio      # más ganancia
+            sl = 0.0015 * precio    # menos pérdida
+            trailing = 0.002 * precio
 
-            # trailing stop
+            # trailing stop (deja correr ganancias)
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
