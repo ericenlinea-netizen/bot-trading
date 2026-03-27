@@ -24,8 +24,9 @@ max_precio = 0
 
 ultimo_trade = 0
 ultima_perdida = False
+racha_perdidas = 0
 
-enviar_alerta("🔥 BOT ACTIVO (BALANCE PERFECTO)")
+enviar_alerta("🔥 BOT PRO VERSIÓN ESTABLE + PRECISA")
 
 while True:
     try:
@@ -36,28 +37,45 @@ while True:
         precio = float(data["price"])
         precios.append(precio)
 
-        if len(precios) > 20:
+        if len(precios) > 25:
             precios.pop(0)
 
-        if len(precios) < 6:
+        if len(precios) < 8:
             time.sleep(1)
             continue
 
         p = precios
 
+        # ================= FILTRO DE MERCADO =================
+        rango = max(p[-10:]) - min(p[-10:])
+        if rango < (0.0008 * precio):
+            time.sleep(1)
+            continue
+
         # ================= COOLDOWN =================
-        cooldown = 4 if not ultima_perdida else 6
+        cooldown = 6 if ultima_perdida else 4
         if time.time() - ultimo_trade < cooldown:
             time.sleep(1)
+            continue
+
+        # ================= CONTROL DE RACHAS =================
+        if racha_perdidas >= 3:
+            enviar_alerta("⛔ PAUSA POR RACHAS NEGATIVAS")
+            time.sleep(20)
+            racha_perdidas = 0
             continue
 
         # ================= ENTRADA =================
         if not estado:
 
-            subida_corta = p[-1] > p[-2]
-            impulso = (p[-1] - p[-3]) > (0.0002 * precio)
+            tendencia = p[-1] > p[-2] > p[-3]
+            impulso = (p[-1] - p[-4]) > (0.0004 * precio)
 
-            if subida_corta and impulso:
+            # evitar comprar en el pico
+            maximo = max(p[-10:])
+            no_pico = p[-1] < maximo * 0.999
+
+            if tendencia and impulso and no_pico:
                 entrada = precio
                 max_precio = precio
                 estado = True
@@ -73,25 +91,28 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            tp = 0.002 * precio
-            sl = 0.0017 * precio
-            trailing = 0.001 * precio
+            tp = 0.0025 * precio
+            sl = 0.0018 * precio
+            trailing = 0.0012 * precio
 
-            # trailing
+            # trailing stop
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
                 ultima_perdida = False
+                racha_perdidas = 0
 
             elif ganancia >= tp:
-                enviar_alerta(f"💰 TP\n{precio}\n+{ganancia}")
+                enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
                 estado = False
                 ultima_perdida = False
+                racha_perdidas = 0
 
             elif ganancia <= -sl:
-                enviar_alerta(f"🛑 SL\n{precio}\n{ganancia}")
+                enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
                 estado = False
                 ultima_perdida = True
+                racha_perdidas += 1
 
         time.sleep(1)
 
