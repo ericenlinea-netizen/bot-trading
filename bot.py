@@ -1,6 +1,7 @@
 import requests
 import time
 
+# ================= TELEGRAM =================
 TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
 CHAT_ID = "5019372975"
 
@@ -13,6 +14,7 @@ def enviar_alerta(msg):
     except:
         pass
 
+# ================= CONFIG =================
 symbol = "ETHUSDT"
 
 estado = False
@@ -20,17 +22,16 @@ entrada = 0
 max_precio = 0
 ultimo_trade = 0
 
-enviar_alerta("🔥 BOT VELAS (MOMENTUM REAL) ACTIVO")
+enviar_alerta("🔥 BOT FINAL PRO (VELAS + FILTRO ANTI-PICO) ACTIVO")
 
 while True:
     try:
-        # 🔥 OBTENER VELAS (1 minuto)
+        # ================= OBTENER VELAS =================
         data = requests.get(
-            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=10"
+            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=15"
         ).json()
 
         cierres = [float(x[4]) for x in data]
-
         precio = cierres[-1]
 
         # ================= COOLDOWN =================
@@ -41,6 +42,13 @@ while True:
         # ================= DETECTAR MOMENTUM =================
         velas_suben = cierres[-1] > cierres[-2] > cierres[-3]
         impulso = (cierres[-1] - cierres[-4]) > (0.0005 * precio)
+
+        # ================= FILTRO ANTI-PICO =================
+        subida_total = (cierres[-1] - cierres[-6]) / precio
+
+        if subida_total > 0.003:
+            time.sleep(2)
+            continue
 
         # ================= ENTRADA =================
         if not estado:
@@ -65,16 +73,17 @@ while True:
             sl = 0.002 * precio
             trailing = 0.0015 * precio
 
+            # trailing stop
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
 
             elif ganancia >= tp:
-                enviar_alerta(f"💰 TP\n{precio}\n+{ganancia}")
+                enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
                 estado = False
 
             elif ganancia <= -sl:
-                enviar_alerta(f"🛑 SL\n{precio}\n{ganancia}")
+                enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
                 estado = False
 
         time.sleep(5)
