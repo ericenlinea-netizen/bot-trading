@@ -22,7 +22,9 @@ entrada = 0
 max_precio = 0
 ultimo_trade = 0
 
-enviar_alerta("🔥 BOT FINAL PRO (RIESGO OPTIMIZADO) ACTIVO")
+racha_perdidas = 0
+
+enviar_alerta("🔥 BOT PRO FINAL (ANTI-PÉRDIDAS + CONTROL RACHAS)")
 
 while True:
     try:
@@ -34,18 +36,31 @@ while True:
         cierres = [float(x[4]) for x in data]
         precio = cierres[-1]
 
+        # ================= BLOQUEO POR RACHAS =================
+        if racha_perdidas >= 2:
+            enviar_alerta("⛔ PAUSA POR 2 PÉRDIDAS SEGUIDAS")
+            time.sleep(60)
+            racha_perdidas = 0
+            continue
+
         # ================= COOLDOWN =================
         if time.time() - ultimo_trade < 10:
             time.sleep(2)
             continue
 
+        # ================= FILTRO DE MERCADO =================
+        rango = max(cierres[-10:]) - min(cierres[-10:])
+        if rango < (0.001 * precio):
+            time.sleep(2)
+            continue
+
         # ================= MOMENTUM REAL =================
         velas_suben = cierres[-1] > cierres[-2] > cierres[-3]
-        impulso = (cierres[-1] - cierres[-4]) > (0.0005 * precio)
+        impulso = (cierres[-1] - cierres[-5]) > (0.0007 * precio)
 
         # ================= FILTRO ANTI-PICO =================
         subida_total = (cierres[-1] - cierres[-6]) / precio
-        if subida_total > 0.003:
+        if subida_total > 0.0025:
             time.sleep(2)
             continue
 
@@ -68,23 +83,26 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            # 🔥 CONFIG CLAVE (RIESGO CORREGIDO)
-            tp = 0.004 * precio      # más ganancia
-            sl = 0.0015 * precio    # menos pérdida
+            # 🔥 CONFIG CLAVE
+            tp = 0.004 * precio
+            sl = 0.0015 * precio
             trailing = 0.002 * precio
 
-            # trailing stop (deja correr ganancias)
+            # trailing
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
+                racha_perdidas = 0
 
             elif ganancia >= tp:
                 enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
                 estado = False
+                racha_perdidas = 0
 
             elif ganancia <= -sl:
                 enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
                 estado = False
+                racha_perdidas += 1
 
         time.sleep(5)
 
