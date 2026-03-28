@@ -24,7 +24,7 @@ ultimo_trade = 0
 
 racha_perdidas = 0
 
-enviar_alerta("🔥 BOT PRO FINAL (ANTI-PÉRDIDAS + CONTROL RACHAS)")
+enviar_alerta("🔥 BOT FINAL PRO MAX (RENTABLE + OPTIMIZADO)")
 
 while True:
     try:
@@ -83,22 +83,26 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            # 🔥 CONFIG CLAVE
+            # 🔥 CONFIG FINAL OPTIMIZADA
             tp = 0.004 * precio
             sl = 0.0015 * precio
-            trailing = 0.002 * precio
+            trailing = 0.0025 * precio
 
-            # trailing
+            # 🔥 TRAILING (DEJA CORRER)
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
                 racha_perdidas = 0
+                time.sleep(20)
 
+            # 🔥 TAKE PROFIT
             elif ganancia >= tp:
                 enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
                 estado = False
                 racha_perdidas = 0
+                time.sleep(30)  # 🔥 pausa después de ganar
 
+            # 🔥 STOP LOSS
             elif ganancia <= -sl:
                 enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
                 estado = False
