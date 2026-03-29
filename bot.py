@@ -23,18 +23,26 @@ max_precio = 0
 ultimo_trade = 0
 
 racha_perdidas = 0
+ganancia_acumulada = 0
 
-enviar_alerta("🔥 BOT FINAL PRO MAX (CORREGIDO)")
+enviar_alerta("🔥 BOT FINAL DEFINITIVO (PROTECCIÓN ACTIVA)")
 
 while True:
     try:
         # ================= OBTENER VELAS =================
         data = requests.get(
-            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=15"
+            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=20"
         ).json()
 
         cierres = [float(x[4]) for x in data]
         precio = cierres[-1]
+
+        # ================= PROTECCIÓN DE GANANCIA =================
+        if ganancia_acumulada >= (0.01 * precio):
+            enviar_alerta("🛑 PROTECCIÓN DE GANANCIA ACTIVADA")
+            time.sleep(120)
+            ganancia_acumulada = 0
+            continue
 
         # ================= BLOQUEO POR RACHAS =================
         if racha_perdidas >= 2:
@@ -91,6 +99,7 @@ while True:
                 enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
                 estado = False
                 racha_perdidas = 0
+                ganancia_acumulada += ganancia
                 time.sleep(20)
 
             # TAKE PROFIT
@@ -98,6 +107,7 @@ while True:
                 enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
                 estado = False
                 racha_perdidas = 0
+                ganancia_acumulada += ganancia
                 time.sleep(30)
 
             # STOP LOSS
