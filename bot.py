@@ -64,7 +64,7 @@ while True:
 
         # ================= MOMENTUM REAL =================
         velas_suben = cierres[-1] > cierres[-2] > cierres[-3]
-        impulso = (cierres[-1] - cierres[-5]) > (0.0007 * precio)
+        impulso = (cierres[-1] - cierres[-5]) > (0.0005 * precio)
 
         # ================= FILTRO ANTI-PICO =================
         subida_total = (cierres[-1] - cierres[-6]) / precio
