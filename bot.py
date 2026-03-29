@@ -21,51 +21,55 @@ estado = False
 entrada = 0
 max_precio = 0
 symbol_activo = None
-ultimo_trade = 0
 
 racha_perdidas = 0
 ganancia_acumulada = 0
 
-enviar_alerta("🔥 BOT MULTI-MERCADO PRO ACTIVO")
+enviar_alerta("🏦 BOT INSTITUCIONAL ACTIVO")
 
-def obtener_score(cierres, precio):
+# ================= FUNCIONES =================
+def get_cierres(symbol, interval, limit=30):
+    data = requests.get(
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    ).json()
+    return [float(x[4]) for x in data]
+
+def tendencia(cierres):
+    return (sum(cierres[-5:]) / 5) > (sum(cierres[-15:]) / 15)
+
+def score_market(cierres, precio):
     score = 0
 
     # tendencia
-    media_corta = sum(cierres[-5:]) / 5
-    media_larga = sum(cierres[-15:]) / 15
-
-    if media_corta > media_larga:
+    if tendencia(cierres):
         score += 2
 
-    # momentum
+    # momentum limpio
     if cierres[-1] > cierres[-2] > cierres[-3]:
         score += 2
 
-    if (cierres[-1] - cierres[-5]) > (0.0007 * precio):
+    # impulso fuerte
+    if (cierres[-1] - cierres[-5]) > (0.0008 * precio):
         score += 2
 
-    # fuerza
+    # fuerza vela actual
     if (cierres[-1] - cierres[-2]) > (0.0004 * precio):
         score += 1
 
     # evitar pico
     subida = (cierres[-1] - cierres[-6]) / precio
-    if subida < 0.003:
+    if subida < 0.0025:
         score += 1
 
     return score
 
+# ================= LOOP =================
 while True:
     try:
 
+        # ================= GESTIÓN =================
         if estado:
-            # ================= GESTIÓN =================
-            data = requests.get(
-                f"https://api.binance.com/api/v3/klines?symbol={symbol_activo}&interval=1m&limit=10"
-            ).json()
-
-            cierres = [float(x[4]) for x in data]
+            cierres = get_cierres(symbol_activo, "1m", 10)
             precio = cierres[-1]
 
             ganancia = precio - entrada
@@ -75,14 +79,14 @@ while True:
 
             tp = 0.004 * precio
             sl = 0.0025 * precio
-            trailing = 0.0018 * precio
+            trailing = 0.0015 * precio
 
             if max_precio - precio >= trailing and ganancia > 0:
                 enviar_alerta(f"💰 TRAILING {symbol_activo}\n{precio}\n+{ganancia:.4f}")
                 estado = False
                 racha_perdidas = 0
                 ganancia_acumulada += ganancia
-                time.sleep(20)
+                time.sleep(15)
 
             elif ganancia >= tp:
                 enviar_alerta(f"💰 TP {symbol_activo}\n{precio}\n+{ganancia:.4f}")
@@ -100,51 +104,69 @@ while True:
             continue
 
         # ================= PROTECCIÓN =================
-        if ganancia_acumulada >= 2:
-            enviar_alerta("🛑 PROTECCIÓN ACTIVADA")
+        if ganancia_acumulada >= 3:
+            enviar_alerta("🛑 PROTECCIÓN DE GANANCIA")
             time.sleep(120)
             ganancia_acumulada = 0
             continue
 
         if racha_perdidas >= 2:
             enviar_alerta("⛔ PAUSA POR RACHAS")
-            time.sleep(60)
+            time.sleep(90)
             racha_perdidas = 0
+            continue
+
+        # ================= FILTRO GLOBAL BTC =================
+        btc_1m = get_cierres("BTCUSDT", "1m", 20)
+        btc_5m = get_cierres("BTCUSDT", "5m", 20)
+
+        if not (tendencia(btc_1m) and tendencia(btc_5m)):
+            time.sleep(5)
             continue
 
         mejor_score = 0
         mejor_symbol = None
         mejor_precio = 0
 
-        # ================= ANALIZAR TODOS =================
+        # ================= SCAN =================
         for symbol in symbols:
-            data = requests.get(
-                f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=30"
-            ).json()
 
-            cierres = [float(x[4]) for x in data]
-            precio = cierres[-1]
+            cierres_1m = get_cierres(symbol, "1m", 30)
+            cierres_5m = get_cierres(symbol, "5m", 30)
 
-            rango = max(cierres[-10:]) - min(cierres[-10:])
+            precio = cierres_1m[-1]
+
+            # evitar rango muerto
+            rango = max(cierres_1m[-10:]) - min(cierres_1m[-10:])
             if rango < (0.0015 * precio):
                 continue
 
-            score = obtener_score(cierres, precio)
+            # confirmación multi timeframe
+            if not (tendencia(cierres_1m) and tendencia(cierres_5m)):
+                continue
+
+            # evitar entrada tardía
+            retroceso = (precio - max(cierres_1m[-5:])) / precio
+            if retroceso < -0.0008:
+                continue
+
+            score = score_market(cierres_1m, precio)
 
             if score > mejor_score:
                 mejor_score = score
                 mejor_symbol = symbol
                 mejor_precio = precio
 
-        # ================= ENTRAR SOLO SI ES MUY BUENO =================
-        if mejor_score >= 6:
+        # ================= ENTRADA ULTRA FILTRADA =================
+        if mejor_score >= 7:
             estado = True
             entrada = mejor_precio
             max_precio = mejor_precio
             symbol_activo = mejor_symbol
-            ultimo_trade = time.time()
 
-            enviar_alerta(f"🚀 ENTRADA {symbol_activo}\n{entrada}\nScore: {mejor_score}")
+            enviar_alerta(
+                f"🚀 ENTRADA {symbol_activo}\n{entrada}\nScore: {mejor_score}"
+            )
 
         time.sleep(5)
 
