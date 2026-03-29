@@ -25,20 +25,20 @@ ultimo_trade = 0
 racha_perdidas = 0
 ganancia_acumulada = 0
 
-enviar_alerta("🔥 BOT FINAL DEFINITIVO (PROTECCIÓN ACTIVA)")
+enviar_alerta("🔥 BOT FINAL MEJORADO ACTIVO")
 
 while True:
     try:
-        # ================= OBTENER VELAS =================
+        # ================= OBTENER DATOS =================
         data = requests.get(
-            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=20"
+            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=30"
         ).json()
 
         cierres = [float(x[4]) for x in data]
         precio = cierres[-1]
 
         # ================= PROTECCIÓN DE GANANCIA =================
-        if ganancia_acumulada >= (0.01 * precio):
+        if ganancia_acumulada >= 2:  # ajusta a tu capital (ej: 2 USDT)
             enviar_alerta("🛑 PROTECCIÓN DE GANANCIA ACTIVADA")
             time.sleep(120)
             ganancia_acumulada = 0
@@ -58,23 +58,29 @@ while True:
 
         # ================= FILTRO DE MERCADO =================
         rango = max(cierres[-10:]) - min(cierres[-10:])
-        if rango < (0.001 * precio):
+        if rango < (0.0015 * precio):
             time.sleep(2)
             continue
 
-        # ================= MOMENTUM REAL =================
+        # ================= TENDENCIA =================
+        media_corta = sum(cierres[-5:]) / 5
+        media_larga = sum(cierres[-15:]) / 15
+        tendencia_alcista = media_corta > media_larga
+
+        # ================= MOMENTUM =================
         velas_suben = cierres[-1] > cierres[-2] > cierres[-3]
-        impulso = (cierres[-1] - cierres[-5]) > (0.0005 * precio)
+        impulso = (cierres[-1] - cierres[-5]) > (0.0006 * precio)
+        fuerza = (cierres[-1] - cierres[-2]) > (0.0003 * precio)
 
         # ================= FILTRO ANTI-PICO =================
         subida_total = (cierres[-1] - cierres[-6]) / precio
-        if subida_total > 0.0025:
+        if subida_total > 0.003:
             time.sleep(2)
             continue
 
         # ================= ENTRADA =================
         if not estado:
-            if velas_suben and impulso:
+            if velas_suben and impulso and tendencia_alcista and fuerza:
                 entrada = precio
                 max_precio = precio
                 estado = True
@@ -90,29 +96,30 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            tp = 0.004 * precio
-            sl = 0.0015 * precio
-            trailing = 0.0025 * precio
+            # Parámetros optimizados
+            tp = 0.004 * precio        # 0.4%
+            sl = 0.0025 * precio      # 0.25%
+            trailing = 0.0018 * precio  # trailing más agresivo
 
-            # TRAILING
+            # ================= TRAILING =================
             if max_precio - precio >= trailing and ganancia > 0:
-                enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia}")
+                enviar_alerta(f"💰 TRAILING\n{precio}\n+{ganancia:.4f}")
                 estado = False
                 racha_perdidas = 0
                 ganancia_acumulada += ganancia
                 time.sleep(20)
 
-            # TAKE PROFIT
+            # ================= TAKE PROFIT =================
             elif ganancia >= tp:
-                enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia}")
+                enviar_alerta(f"💰 TAKE PROFIT\n{precio}\n+{ganancia:.4f}")
                 estado = False
                 racha_perdidas = 0
                 ganancia_acumulada += ganancia
                 time.sleep(30)
 
-            # STOP LOSS
+            # ================= STOP LOSS =================
             elif ganancia <= -sl:
-                enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia}")
+                enviar_alerta(f"🛑 STOP LOSS\n{precio}\n{ganancia:.4f}")
                 estado = False
                 racha_perdidas += 1
 
