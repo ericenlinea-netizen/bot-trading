@@ -25,7 +25,7 @@ symbol_activo = None
 racha_perdidas = 0
 ganancia_acumulada = 0
 
-enviar_alerta("🏦 BOT INSTITUCIONAL ACTIVO")
+enviar_alerta("🏦 HEDGE BOT ACTIVADO")
 
 # ================= FUNCIONES =================
 def get_cierres(symbol, interval, limit=30):
@@ -37,31 +37,38 @@ def get_cierres(symbol, interval, limit=30):
 def tendencia(cierres):
     return (sum(cierres[-5:]) / 5) > (sum(cierres[-15:]) / 15)
 
-def score_market(cierres, precio):
-    score = 0
+def detectar_pullback(cierres):
+    # tendencia previa
+    subida = cierres[-4] < cierres[-3] < cierres[-2]
 
-    # tendencia
+    # retroceso
+    retroceso = cierres[-2] > cierres[-1]
+
+    # rebote
+    rebote = cierres[-1] > cierres[-2]
+
+    return subida and rebote
+
+def fuerza(cierres, precio):
+    return (cierres[-1] - cierres[-2]) > (0.0004 * precio)
+
+def score(cierres, precio):
+    s = 0
+
     if tendencia(cierres):
-        score += 2
+        s += 2
 
-    # momentum limpio
-    if cierres[-1] > cierres[-2] > cierres[-3]:
-        score += 2
+    if fuerza(cierres, precio):
+        s += 2
 
-    # impulso fuerte
     if (cierres[-1] - cierres[-5]) > (0.0008 * precio):
-        score += 2
+        s += 2
 
-    # fuerza vela actual
-    if (cierres[-1] - cierres[-2]) > (0.0004 * precio):
-        score += 1
-
-    # evitar pico
     subida = (cierres[-1] - cierres[-6]) / precio
     if subida < 0.0025:
-        score += 1
+        s += 1
 
-    return score
+    return s
 
 # ================= LOOP =================
 while True:
@@ -77,34 +84,36 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            tp = 0.004 * precio
-            sl = 0.0025 * precio
-            trailing = 0.0015 * precio
+            # SL estructural
+            sl = min(cierres[-5:])
 
-            if max_precio - precio >= trailing and ganancia > 0:
-                enviar_alerta(f"💰 TRAILING {symbol_activo}\n{precio}\n+{ganancia:.4f}")
+            # TP dinámico
+            tp = entrada + (entrada - sl) * 2
+
+            trailing = (max_precio - entrada) * 0.5
+
+            if precio <= sl:
+                enviar_alerta(f"🛑 SL {symbol_activo}\n{precio}\n{ganancia:.4f}")
                 estado = False
-                racha_perdidas = 0
-                ganancia_acumulada += ganancia
-                time.sleep(15)
+                racha_perdidas += 1
 
-            elif ganancia >= tp:
+            elif precio >= tp:
                 enviar_alerta(f"💰 TP {symbol_activo}\n{precio}\n+{ganancia:.4f}")
                 estado = False
                 racha_perdidas = 0
                 ganancia_acumulada += ganancia
-                time.sleep(20)
 
-            elif ganancia <= -sl:
-                enviar_alerta(f"🛑 SL {symbol_activo}\n{precio}\n{ganancia:.4f}")
+            elif max_precio - precio >= trailing and ganancia > 0:
+                enviar_alerta(f"💰 TRAILING {symbol_activo}\n{precio}\n+{ganancia:.4f}")
                 estado = False
-                racha_perdidas += 1
+                racha_perdidas = 0
+                ganancia_acumulada += ganancia
 
             time.sleep(5)
             continue
 
         # ================= PROTECCIÓN =================
-        if ganancia_acumulada >= 3:
+        if ganancia_acumulada >= 5:
             enviar_alerta("🛑 PROTECCIÓN DE GANANCIA")
             time.sleep(120)
             ganancia_acumulada = 0
@@ -116,7 +125,7 @@ while True:
             racha_perdidas = 0
             continue
 
-        # ================= FILTRO GLOBAL BTC =================
+        # ================= FILTRO BTC =================
         btc_1m = get_cierres("BTCUSDT", "1m", 20)
         btc_5m = get_cierres("BTCUSDT", "5m", 20)
 
@@ -124,9 +133,8 @@ while True:
             time.sleep(5)
             continue
 
+        mejor = None
         mejor_score = 0
-        mejor_symbol = None
-        mejor_precio = 0
 
         # ================= SCAN =================
         for symbol in symbols:
@@ -136,36 +144,37 @@ while True:
 
             precio = cierres_1m[-1]
 
-            # evitar rango muerto
+            # rango mínimo
             rango = max(cierres_1m[-10:]) - min(cierres_1m[-10:])
             if rango < (0.0015 * precio):
                 continue
 
-            # confirmación multi timeframe
+            # tendencia doble
             if not (tendencia(cierres_1m) and tendencia(cierres_5m)):
                 continue
 
-            # evitar entrada tardía
-            retroceso = (precio - max(cierres_1m[-5:])) / precio
-            if retroceso < -0.0008:
+            # pullback real
+            if not detectar_pullback(cierres_1m):
                 continue
 
-            score = score_market(cierres_1m, precio)
+            # evitar máximos
+            if precio >= max(cierres_1m[-10:]):
+                continue
 
-            if score > mejor_score:
-                mejor_score = score
-                mejor_symbol = symbol
-                mejor_precio = precio
+            s = score(cierres_1m, precio)
 
-        # ================= ENTRADA ULTRA FILTRADA =================
-        if mejor_score >= 7:
+            if s > mejor_score:
+                mejor_score = s
+                mejor = (symbol, precio)
+
+        # ================= ENTRADA =================
+        if mejor and mejor_score >= 6:
+            symbol_activo, entrada = mejor
+            max_precio = entrada
             estado = True
-            entrada = mejor_precio
-            max_precio = mejor_precio
-            symbol_activo = mejor_symbol
 
             enviar_alerta(
-                f"🚀 ENTRADA {symbol_activo}\n{entrada}\nScore: {mejor_score}"
+                f"🚀 ENTRY {symbol_activo}\n{entrada}\nScore: {mejor_score}"
             )
 
         time.sleep(5)
