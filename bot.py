@@ -25,7 +25,7 @@ symbol_activo = None
 racha_perdidas = 0
 ganancia_acumulada = 0
 
-enviar_alerta("🏦 HEDGE BOT ACTIVADO")
+enviar_alerta("🏦 HEDGE BOT FINAL (RIESGO CONTROLADO)")
 
 # ================= FUNCIONES =================
 def get_cierres(symbol, interval, limit=30):
@@ -38,15 +38,9 @@ def tendencia(cierres):
     return (sum(cierres[-5:]) / 5) > (sum(cierres[-15:]) / 15)
 
 def detectar_pullback(cierres):
-    # tendencia previa
     subida = cierres[-4] < cierres[-3] < cierres[-2]
-
-    # retroceso
     retroceso = cierres[-2] > cierres[-1]
-
-    # rebote
     rebote = cierres[-1] > cierres[-2]
-
     return subida and rebote
 
 def fuerza(cierres, precio):
@@ -84,12 +78,16 @@ while True:
             if precio > max_precio:
                 max_precio = precio
 
-            # SL estructural
-            sl = min(cierres[-5:])
+            # ===== SL DINÁMICO CONTROLADO =====
+            sl_estructura = min(cierres[-5:])
+            sl_maximo = entrada - (0.002 * entrada)  # máximo 0.2%
+            sl = max(sl_estructura, sl_maximo)
 
-            # TP dinámico
-            tp = entrada + (entrada - sl) * 2
+            # ===== TP dinámico (RR 2:1) =====
+            riesgo = entrada - sl
+            tp = entrada + (riesgo * 2)
 
+            # ===== trailing =====
             trailing = (max_precio - entrada) * 0.5
 
             if precio <= sl:
@@ -144,20 +142,20 @@ while True:
 
             precio = cierres_1m[-1]
 
-            # rango mínimo
+            # ===== evitar rango muerto =====
             rango = max(cierres_1m[-10:]) - min(cierres_1m[-10:])
             if rango < (0.0015 * precio):
                 continue
 
-            # tendencia doble
+            # ===== tendencia doble =====
             if not (tendencia(cierres_1m) and tendencia(cierres_5m)):
                 continue
 
-            # pullback real
+            # ===== pullback =====
             if not detectar_pullback(cierres_1m):
                 continue
 
-            # evitar máximos
+            # ===== evitar máximos =====
             if precio >= max(cierres_1m[-10:]):
                 continue
 
@@ -165,11 +163,26 @@ while True:
 
             if s > mejor_score:
                 mejor_score = s
-                mejor = (symbol, precio)
+                mejor = (symbol, precio, cierres_1m)
 
         # ================= ENTRADA =================
         if mejor and mejor_score >= 6:
-            symbol_activo, entrada = mejor
+            symbol_temp, precio_temp, cierres_temp = mejor
+
+            # ===== calcular SL antes de entrar =====
+            sl_estructura = min(cierres_temp[-5:])
+            sl_maximo = precio_temp - (0.002 * precio_temp)
+            sl = max(sl_estructura, sl_maximo)
+
+            riesgo = precio_temp - sl
+
+            # ===== FILTRO DE RIESGO =====
+            if riesgo > (0.003 * precio_temp):
+                continue
+
+            # ===== ENTRADA FINAL =====
+            symbol_activo = symbol_temp
+            entrada = precio_temp
             max_precio = entrada
             estado = True
 
