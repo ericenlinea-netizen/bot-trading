@@ -2,8 +2,8 @@ import requests
 import time
 
 # ================= TELEGRAM =================
-TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
-CHAT_ID = "5019372975"
+TOKEN = "TU_TOKEN"
+CHAT_ID = "TU_CHAT_ID"
 
 def enviar_alerta(msg):
     try:
