@@ -25,7 +25,7 @@ symbol_activo = None
 racha_perdidas = 0
 ganancia_acumulada = 0
 
-enviar_alerta("📊 BOT CUANTITATIVO ACTIVO")
+enviar_alerta("📊 BOT CUANTITATIVO BALANCEADO ACTIVO")
 
 # ================= FUNCIONES =================
 def get_cierres(symbol, interval, limit=30):
@@ -41,7 +41,7 @@ def tendencia(cierres):
     return media(cierres, 5) > media(cierres, 15)
 
 def volatilidad(cierres, precio):
-    return (max(cierres[-10:]) - min(cierres[-10:])) > (0.0015 * precio)
+    return (max(cierres[-10:]) - min(cierres[-10:])) > (0.0012 * precio)
 
 def detectar_pullback(cierres):
     subida = cierres[-5] < cierres[-4] < cierres[-3]
@@ -50,7 +50,7 @@ def detectar_pullback(cierres):
     return subida and retroceso and confirmacion
 
 def fuerza(cierres, precio):
-    return (cierres[-1] - cierres[-2]) > (0.0003 * precio)
+    return (cierres[-1] - cierres[-2]) > (0.0002 * precio)
 
 def score(cierres, precio):
     s = 0
@@ -67,7 +67,7 @@ def score(cierres, precio):
     if volatilidad(cierres, precio):
         s += 1
 
-    if (cierres[-1] - cierres[-5]) > (0.0008 * precio):
+    if (cierres[-1] - cierres[-5]) > (0.0006 * precio):
         s += 1
 
     return s
@@ -133,7 +133,7 @@ while True:
         btc_1m = get_cierres("BTCUSDT", "1m", 20)
         btc_5m = get_cierres("BTCUSDT", "5m", 20)
 
-        if not (tendencia(btc_1m) and tendencia(btc_5m)):
+        if not tendencia(btc_1m):
             time.sleep(5)
             continue
 
@@ -151,7 +151,7 @@ while True:
             if not volatilidad(cierres_1m, precio):
                 continue
 
-            if not (tendencia(cierres_1m) and tendencia(cierres_5m)):
+            if not tendencia(cierres_1m):
                 continue
 
             if precio >= max(cierres_1m[-10:]):
@@ -170,7 +170,7 @@ while True:
                 mejor = (symbol, precio, cierres_1m)
 
         # ================= ENTRADA =================
-        if mejor and mejor_score >= 6:
+        if mejor and mejor_score >= 5:
             symbol_temp, precio_temp, cierres_temp = mejor
 
             sl_estructura = min(cierres_temp[-5:])
