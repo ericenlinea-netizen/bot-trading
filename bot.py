@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 
 # ================= TELEGRAM =================
-TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
+TOKEN = "8750698916:AAEgYA-AQqienTfKYd8GzGTBj7ypjrPz_UM"
 CHAT_ID = "5019372975"
 
 def enviar_alerta(msg):
@@ -17,705 +17,703 @@ def enviar_alerta(msg):
     except:
         pass
 
-# ================= CONFIG =================
-symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT", "MATICUSDT"]
+# ============================================================
+# CONFIG GENERAL
+# ------------------------------------------------------------
+# Filosofía: Swing sobre 5m/15m. Menos operaciones, más calidad.
+# Cada entrada debe justificar costos reales de Binance (~0.1%
+# por lado = 0.2% ida y vuelta). Se exige mínimo 0.5% de margen
+# sobre el TP1 para que tenga sentido operar.
+# ============================================================
 
-CAPITAL_BASE      = 100.0   # Capital referencia en USDT para calcular tamaño
-RIESGO_PCT        = 0.01    # Riesgo por operación: 1% del capital
-SCORE_MIN_LONG    = 9       # Score mínimo para long
-SCORE_MIN_SHORT   = 9       # Score mínimo para short
-COOLDOWN_SYMBOL   = 300     # Segundos entre operaciones del mismo símbolo
-RESUMEN_CADA      = 3600    # Enviar resumen cada N segundos
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT",
+           "ADAUSDT", "XRPUSDT", "DOGEUSDT", "LINKUSDT"]
 
-estado            = False
-direccion         = None    # "long" o "short"
-entrada           = 0.0
-max_precio        = 0.0
-min_precio        = float("inf")
-symbol_activo     = None
+CAPITAL_BASE      = 100.0    # USDT de referencia para sizing
+RIESGO_PCT        = 0.01     # 1% del capital por operación
+FEE_ROUND_TRIP    = 0.002    # 0.2% = 0.1% entrada + 0.1% salida
+MIN_PROFIT_PCT    = 0.005    # TP1 debe ser al menos 0.5% sobre entrada
+MIN_RR            = 2.0      # R:R mínimo aceptable (tp/sl)
+SCORE_MIN         = 11       # Score mínimo sobre 18 puntos posibles
+MAX_ATR_PCT       = 0.015    # No entrar si ATR > 1.5% (demasiado riesgo)
+MIN_ATR_PCT       = 0.003    # No entrar si ATR < 0.3% (sin movimiento)
+COOLDOWN_SYMBOL   = 600      # 10 min entre operaciones del mismo símbolo
+RESUMEN_CADA      = 3600     # Resumen estadístico cada hora
 
-racha_perdidas    = 0
-racha_ganancias   = 0
-ganancia_acumulada = 0.0
-operaciones_totales = 0
-operaciones_ganadoras = 0
-pnl_total         = 0.0
+# Estado de posición
+estado     = False
+direccion  = None
+entrada    = 0.0
+max_precio = 0.0
+min_precio = float("inf")
+symbol_act = None
 
-cooldowns         = {}      # {symbol: timestamp_ultima_salida}
-ultimo_resumen    = time.time()
+# Estadísticas
+racha_perdidas   = 0
+racha_ganancias  = 0
+gan_acumulada    = 0.0
+ops_total        = 0
+ops_ganadoras    = 0
+pnl_total        = 0.0
+cooldowns        = {}
+ultimo_resumen   = time.time()
 
 enviar_alerta(
-    "📊 <b>BOT CUANTITATIVO v3 ACTIVO</b>\n"
+    "📊 <b>BOT SWING v4 ACTIVO</b>\n"
     f"⏰ {datetime.now().strftime('%H:%M:%S')}\n"
-    f"💼 Capital ref: ${CAPITAL_BASE} | Riesgo/op: {RIESGO_PCT*100:.1f}%\n"
-    f"📈 Long + 📉 Short habilitados"
+    f"📐 TF primario: 5m | Confirmación: 15m + 1h\n"
+    f"🎯 Score mínimo: {SCORE_MIN}/18 | Fee: {FEE_ROUND_TRIP*100:.1f}% RT\n"
+    f"💵 Capital ref: ${CAPITAL_BASE} | Riesgo: {RIESGO_PCT*100:.1f}%"
 )
 
-# ================= DATOS =================
+# ================= OBTENCIÓN DE DATOS =================
 
-def get_klines(symbol, interval, limit=60):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    r = requests.get(url, timeout=10).json()
-    cierres   = [float(x[4]) for x in r]
-    altos     = [float(x[2]) for x in r]
-    bajos     = [float(x[3]) for x in r]
-    volumenes = [float(x[5]) for x in r]
-    aperturas = [float(x[1]) for x in r]
-    return cierres, altos, bajos, volumenes, aperturas
+def get_klines(symbol, interval, limit=100):
+    url = (f"https://api.binance.com/api/v3/klines"
+           f"?symbol={symbol}&interval={interval}&limit={limit}")
+    data = requests.get(url, timeout=10).json()
+    c = [float(x[4]) for x in data]   # close
+    h = [float(x[2]) for x in data]   # high
+    l = [float(x[3]) for x in data]   # low
+    v = [float(x[5]) for x in data]   # volume
+    o = [float(x[1]) for x in data]   # open
+    return c, h, l, v, o
 
 # ================= INDICADORES =================
 
-def ema(valores, n):
+def ema(vals, n):
     k = 2 / (n + 1)
-    e = [valores[0]]
-    for v in valores[1:]:
+    e = [vals[0]]
+    for v in vals[1:]:
         e.append(v * k + e[-1] * (1 - k))
     return e
 
-def rsi(cierres, n=14):
-    ganancias, perdidas = [], []
-    for i in range(1, len(cierres)):
-        d = cierres[i] - cierres[i-1]
-        ganancias.append(max(d, 0))
-        perdidas.append(max(-d, 0))
-    if len(ganancias) < n:
+def rsi(c, n=14):
+    g, p = [], []
+    for i in range(1, len(c)):
+        d = c[i] - c[i-1]
+        g.append(max(d, 0))
+        p.append(max(-d, 0))
+    if len(g) < n:
         return 50.0
-    ag = sum(ganancias[-n:]) / n
-    ap = sum(perdidas[-n:]) / n
-    if ap == 0:
-        return 100.0
-    return 100 - (100 / (1 + ag / ap))
+    ag = sum(g[-n:]) / n
+    ap = sum(p[-n:]) / n
+    return 100.0 if ap == 0 else 100 - 100 / (1 + ag / ap)
 
-def macd_completo(cierres):
-    e12 = ema(cierres, 12)
-    e26 = ema(cierres, 26)
-    linea    = [a - b for a, b in zip(e12, e26)]
-    senal    = ema(linea, 9)
-    hist     = [l - s for l, s in zip(linea, senal)]
-    return linea[-1], senal[-1], hist[-1], hist[-2] if len(hist) > 1 else 0
+def macd(c):
+    e12 = ema(c, 12)
+    e26 = ema(c, 26)
+    lin = [a - b for a, b in zip(e12, e26)]
+    sig = ema(lin, 9)
+    hist = [l - s for l, s in zip(lin, sig)]
+    return lin[-1], sig[-1], hist[-1], hist[-2] if len(hist) > 1 else 0
 
-def atr(altos, bajos, cierres, n=14):
-    trs = []
-    for i in range(1, len(cierres)):
-        trs.append(max(
-            altos[i] - bajos[i],
-            abs(altos[i] - cierres[i-1]),
-            abs(bajos[i] - cierres[i-1])
-        ))
+def atr(h, l, c, n=14):
+    trs = [max(h[i]-l[i], abs(h[i]-c[i-1]), abs(l[i]-c[i-1]))
+           for i in range(1, len(c))]
     if len(trs) < n:
-        return cierres[-1] * 0.002
+        return c[-1] * 0.005
     return sum(trs[-n:]) / n
 
-def bollinger(cierres, n=20, dev=2.0):
-    if len(cierres) < n:
-        p = cierres[-1]
-        return p, p * 1.01, p * 0.99
-    v = cierres[-n:]
-    m = sum(v) / n
-    s = math.sqrt(sum((x - m)**2 for x in v) / n)
-    return m, m + dev * s, m - dev * s
+def bollinger(c, n=20, k=2.0):
+    if len(c) < n:
+        return c[-1], c[-1]*1.02, c[-1]*0.98
+    w = c[-n:]
+    m = sum(w) / n
+    s = math.sqrt(sum((x-m)**2 for x in w) / n)
+    return m, m + k*s, m - k*s
 
-def stoch_rsi(cierres, n=14, smooth=3):
-    rsis = [rsi(cierres[:i+1], n) for i in range(n, len(cierres))]
-    if len(rsis) < n:
+def stoch_rsi(c, rsi_n=14, stoch_n=14, smooth=3):
+    rsis = []
+    for i in range(rsi_n, len(c)):
+        rsis.append(rsi(c[:i+1], rsi_n))
+    if len(rsis) < stoch_n:
         return 50.0, 50.0
-    ventana = rsis[-n:]
-    mn, mx = min(ventana), max(ventana)
+    w = rsis[-stoch_n:]
+    mn, mx = min(w), max(w)
     if mx == mn:
         return 50.0, 50.0
-    k = ((rsis[-1] - mn) / (mx - mn)) * 100
-    d = sum(((rsis[-i] - mn) / (mx - mn)) * 100 for i in range(1, smooth + 1)) / smooth
-    return k, d
+    k_val = (rsis[-1] - mn) / (mx - mn) * 100
+    d_val = sum(((rsis[-i] - mn) / (mx - mn)) * 100
+                for i in range(1, min(smooth+1, len(rsis)+1))) / smooth
+    return k_val, d_val
 
-def volumen_relativo(volumenes, n=20):
-    if len(volumenes) < n:
+def obv(c, v):
+    o = [0.0]
+    for i in range(1, len(c)):
+        o.append(o[-1] + (v[i] if c[i] > c[i-1] else
+                          -v[i] if c[i] < c[i-1] else 0))
+    return o
+
+def vol_relativo(v, n=20):
+    if len(v) < n:
         return 1.0
-    promedio = sum(volumenes[-n:-1]) / (n - 1)
-    if promedio == 0:
-        return 1.0
-    return volumenes[-1] / promedio
+    avg = sum(v[-n:-1]) / (n-1)
+    return v[-1] / avg if avg > 0 else 1.0
 
-def obv(cierres, volumenes):
-    resultado = [0.0]
-    for i in range(1, len(cierres)):
-        if cierres[i] > cierres[i-1]:
-            resultado.append(resultado[-1] + volumenes[i])
-        elif cierres[i] < cierres[i-1]:
-            resultado.append(resultado[-1] - volumenes[i])
-        else:
-            resultado.append(resultado[-1])
-    return resultado
-
-def divergencia_alcista(cierres, n=14):
-    if len(cierres) < 30:
+def divergencia_alcista(c, n=14):
+    if len(c) < 35:
         return False
-    r_actual = rsi(cierres, n)
-    r_previo = rsi(cierres[:-5], n)
-    precio_baja = cierres[-1] < cierres[-6]
-    rsi_sube    = r_actual > r_previo + 2
-    return precio_baja and rsi_sube
+    r_now  = rsi(c, n)
+    r_prev = rsi(c[:-6], n)
+    return c[-1] < c[-7] and r_now > r_prev + 3
 
-def divergencia_bajista(cierres, n=14):
-    if len(cierres) < 30:
+def divergencia_bajista(c, n=14):
+    if len(c) < 35:
         return False
-    r_actual = rsi(cierres, n)
-    r_previo = rsi(cierres[:-5], n)
-    precio_sube = cierres[-1] > cierres[-6]
-    rsi_baja    = r_actual < r_previo - 2
-    return precio_sube and rsi_baja
+    r_now  = rsi(c, n)
+    r_prev = rsi(c[:-6], n)
+    return c[-1] > c[-7] and r_now < r_prev - 3
 
-def mercado_en_tendencia(cierres, umbral=0.3):
-    e20 = ema(cierres, 20)
-    e50 = ema(cierres, 50)
-    diff = abs(e20[-1] - e50[-1]) / e50[-1]
-    return diff > umbral * 0.01
+# ================= FILTRO DE VIABILIDAD =================
 
-def detectar_pullback_long(cierres):
-    e9 = ema(cierres, 9)
-    subida      = cierres[-6] < cierres[-5] < cierres[-4]
-    retroceso   = cierres[-4] > cierres[-3] >= cierres[-2]
-    retoma      = cierres[-1] > cierres[-2]
-    soporte     = cierres[-1] >= e9[-1] * 0.999
-    return subida and retroceso and retoma and soporte
+def viabilidad_entry(precio, sl, atr_val, direccion):
+    """
+    Verifica que la operación cubra fees y tenga movimiento suficiente.
+    Retorna (ok, motivo).
+    """
+    riesgo = abs(precio - sl)
 
-def detectar_pullback_short(cierres):
-    e9 = ema(cierres, 9)
-    bajada      = cierres[-6] > cierres[-5] > cierres[-4]
-    rebote      = cierres[-4] < cierres[-3] <= cierres[-2]
-    retoma      = cierres[-1] < cierres[-2]
-    resistencia = cierres[-1] <= e9[-1] * 1.001
-    return bajada and rebote and retoma and resistencia
+    # --- Riesgo mínimo: cubrir fees más margen ---
+    min_riesgo = precio * (FEE_ROUND_TRIP + MIN_PROFIT_PCT / MIN_RR)
+    if riesgo < min_riesgo:
+        return False, f"Riesgo {riesgo/precio*100:.3f}% < mínimo {min_riesgo/precio*100:.3f}%"
 
-def patron_vela_alcista(cierres, altos, bajos, aperturas):
-    o, c, h, l = aperturas[-1], cierres[-1], altos[-1], bajos[-1]
-    rango = h - l
-    if rango == 0:
-        return False
-    mecha_inf = (min(o, c) - l) / rango
-    cuerpo    = (c - o) / rango
-    return c > o and mecha_inf > 0.35 and cuerpo > 0.35
+    # --- Riesgo máximo: no sobredimensionar ---
+    if riesgo > precio * 0.015:
+        return False, f"Riesgo excesivo {riesgo/precio*100:.2f}%"
 
-def patron_vela_bajista(cierres, altos, bajos, aperturas):
-    o, c, h, l = aperturas[-1], cierres[-1], altos[-1], bajos[-1]
-    rango = h - l
-    if rango == 0:
-        return False
-    mecha_sup = (h - max(o, c)) / rango
-    cuerpo    = (o - c) / rango
-    return c < o and mecha_sup > 0.35 and cuerpo > 0.35
+    # --- ATR en rango aceptable ---
+    atr_pct = atr_val / precio
+    if atr_pct < MIN_ATR_PCT:
+        return False, f"ATR {atr_pct*100:.3f}% muy bajo (sin movimiento)"
+    if atr_pct > MAX_ATR_PCT:
+        return False, f"ATR {atr_pct*100:.3f}% muy alto (riesgo extremo)"
+
+    # --- TP1 cubre fees con margen ---
+    tp1_dist = riesgo * MIN_RR
+    tp1_pct  = tp1_dist / precio
+    if tp1_pct < FEE_ROUND_TRIP + MIN_PROFIT_PCT:
+        return False, f"TP1 {tp1_pct*100:.3f}% no cubre fees+profit mínimo"
+
+    return True, "OK"
 
 # ================= SESIÓN HORARIA =================
 
+def hora_utc():
+    return datetime.now(timezone.utc).hour
+
 def sesion_activa():
-    hora = datetime.now(timezone.utc).hour
-    # Sesión asiática: 00-08 UTC — volatilidad media
-    # Sesión europea: 07-16 UTC — buena volatilidad
-    # Sesión americana: 13-21 UTC — mayor volatilidad
-    # Evitar 22-23 UTC (cierre + bajo volumen)
-    if 0 <= hora < 22:
-        return True
-    return False
+    h = hora_utc()
+    # Cierre entre 22-00 UTC: volumen bajo, spread alto
+    return not (22 <= h or h < 1)
 
 def peso_sesion():
-    hora = datetime.now(timezone.utc).hour
-    if 13 <= hora < 21:   # Solapamiento EU + US: mejor momento
-        return 1.0
-    if 7 <= hora < 16:    # Solo europea
-        return 0.85
-    if 0 <= hora < 8:     # Solo asiática
-        return 0.75
+    h = hora_utc()
+    if 13 <= h < 21:  return 1.0   # Solapamiento EU+US
+    if  7 <= h < 16:  return 0.85  # Europa
+    if  1 <= h <  8:  return 0.75  # Asia
     return 0.6
 
-# ================= SIZING DE POSICIÓN =================
+# ================= SIZING =================
 
-def calcular_tamano(precio_entrada, sl, capital=CAPITAL_BASE, riesgo_pct=RIESGO_PCT):
-    riesgo_usd = capital * riesgo_pct
-    distancia  = abs(precio_entrada - sl)
+def calcular_tamano(precio, sl):
+    distancia = abs(precio - sl)
     if distancia == 0:
-        return 0
-    unidades = riesgo_usd / distancia
-    return round(unidades, 6)
+        return 0.0
+    riesgo_usd = CAPITAL_BASE * RIESGO_PCT
+    return round(riesgo_usd / distancia, 6)
 
-# ================= RÉGIMEN DE MERCADO =================
+# ================= SCORES =================
 
-def detectar_regimen(cierres_15m):
-    e20 = ema(cierres_15m, 20)
-    e50 = ema(cierres_15m, 50)
-    adx_proxy = abs(e20[-1] - e50[-1]) / e50[-1] * 100
-    if adx_proxy > 0.5:
-        return "TENDENCIA"
-    return "LATERAL"
+def _ema_alineado_long(c):
+    e9, e21, e50 = ema(c, 9), ema(c, 21), ema(c, 50)
+    return e9[-1] > e21[-1] > e50[-1], e9, e21, e50
 
-# ================= SCORE LONG =================
+def _ema_alineado_short(c):
+    e9, e21, e50 = ema(c, 9), ema(c, 21), ema(c, 50)
+    return e9[-1] < e21[-1] < e50[-1], e9, e21, e50
 
-def score_long(cierres, altos, bajos, volumenes, aperturas):
+def pullback_long(c, e9):
+    """Retroceso hasta zona EMA9 y recuperación."""
+    subida    = c[-7] < c[-6] < c[-5]
+    retro     = c[-5] > c[-4] and c[-4] <= c[-3]
+    recupera  = c[-1] > c[-2] > c[-3]
+    soporte   = c[-1] >= e9[-1] * 0.998
+    return subida and retro and recupera and soporte
+
+def pullback_short(c, e9):
+    bajada    = c[-7] > c[-6] > c[-5]
+    rebote    = c[-5] < c[-4] and c[-4] >= c[-3]
+    retoma    = c[-1] < c[-2] < c[-3]
+    resist    = c[-1] <= e9[-1] * 1.002
+    return bajada and rebote and retoma and resist
+
+def vela_alcista_fuerte(c, h, l, o):
+    """Marubozu o martillo alcista con cuerpo > 50% del rango."""
+    cuerpo = c[-1] - o[-1]
+    rango  = h[-1] - l[-1]
+    if rango < 1e-9:
+        return False
+    mecha_inf = (min(o[-1], c[-1]) - l[-1]) / rango
+    return c[-1] > o[-1] and cuerpo / rango > 0.5 and mecha_inf > 0.2
+
+def vela_bajista_fuerte(c, h, l, o):
+    cuerpo = o[-1] - c[-1]
+    rango  = h[-1] - l[-1]
+    if rango < 1e-9:
+        return False
+    mecha_sup = (h[-1] - max(o[-1], c[-1])) / rango
+    return c[-1] < o[-1] and cuerpo / rango > 0.5 and mecha_sup > 0.2
+
+def score_long(c5, h5, l5, v5, o5, c15, c1h):
+    """Score sobre 18 puntos usando 5m como primario."""
     s = 0
-    info = {}
+    flags = {}
 
-    e9  = ema(cierres, 9)
-    e21 = ema(cierres, 21)
-    e50 = ema(cierres, 50)
-
-    info["EMA"]  = e9[-1] > e21[-1] > e50[-1]
-    if info["EMA"]:
+    alin, e9, e21, e50 = _ema_alineado_long(c5)
+    flags["EMA-alin"] = alin
+    if alin:
         s += 3
 
-    slope_ok = e9[-1] > e9[-4] and e21[-1] > e21[-4]
-    info["Slope"] = slope_ok
-    if slope_ok:
+    # Pendiente EMA positiva en 15m
+    e21_15 = ema(c15, 21)
+    slope15 = e21_15[-1] > e21_15[-5]
+    flags["Slope15"] = slope15
+    if slope15:
         s += 1
 
-    info["PB"] = detectar_pullback_long(cierres)
-    if info["PB"]:
+    # 1h también alcista
+    e21_1h = ema(c1h, 21)
+    long_1h = c1h[-1] > e21_1h[-1]
+    flags["1h-alcista"] = long_1h
+    if long_1h:
+        s += 1
+
+    # Pullback hasta EMA9 y recuperación
+    pb = pullback_long(c5, e9)
+    flags["Pullback"] = pb
+    if pb:
         s += 2
 
-    r = rsi(cierres)
-    info["RSI"] = r
-    if 42 <= r <= 65:
+    # RSI zona momentum sin sobrecompra
+    r5 = rsi(c5)
+    flags["RSI5m"] = round(r5, 1)
+    if 45 <= r5 <= 65:
         s += 2
-    elif r > 72:
+    elif r5 > 70:
         s -= 2
+    elif r5 < 40:
+        s -= 1
 
-    div_alc = divergencia_alcista(cierres)
-    info["DivAlc"] = div_alc
-    if div_alc:
+    # Divergencia alcista 5m
+    div = divergencia_alcista(c5)
+    flags["DivAlc"] = div
+    if div:
         s += 2
 
-    linea, senal, hist_act, hist_prev = macd_completo(cierres)
-    info["MACD"] = linea > senal
-    if linea > senal:
+    # MACD 5m positivo y acelerando
+    lin5, sig5, hist5, hist5p = macd(c5)
+    flags["MACD"] = lin5 > sig5
+    if lin5 > sig5:
         s += 1
-    info["MACDhist"] = hist_act > 0 and hist_act > hist_prev
-    if hist_act > 0 and hist_act > hist_prev:
+    if hist5 > 0 and hist5 > hist5p:
+        flags["MACDacel"] = True
         s += 1
-
-    vr = volumen_relativo(volumenes)
-    info["Vol"] = vr
-    if vr >= 1.3:
-        s += 2
-    elif vr >= 1.1:
-        s += 1
-
-    obv_vals = obv(cierres, volumenes)
-    obv_sube = obv_vals[-1] > obv_vals[-5]
-    info["OBV"] = obv_sube
-    if obv_sube:
-        s += 1
-
-    bb_m, bb_sup, bb_inf = bollinger(cierres)
-    if cierres[-1] > bb_m and cierres[-2] <= bb_m:
-        s += 1
-        info["BB"] = "cruce"
-    elif cierres[-1] > bb_m:
-        info["BB"] = "sobre"
     else:
-        info["BB"] = "bajo"
+        flags["MACDacel"] = False
 
-    stk, std = stoch_rsi(cierres)
-    info["StochRSI"] = stk
-    if stk > std and 20 < stk < 80:
+    # Volumen: al menos 1.5x el promedio
+    vr = vol_relativo(v5)
+    flags["Vol"] = round(vr, 2)
+    if vr >= 1.5:
+        s += 2
+    elif vr >= 1.2:
+        s += 1
+    elif vr < 0.8:
+        s -= 1
+
+    # OBV ascendente
+    obv_vals = obv(c5, v5)
+    obv_ok = obv_vals[-1] > obv_vals[-6]
+    flags["OBV"] = obv_ok
+    if obv_ok:
         s += 1
 
-    info["Vela"] = patron_vela_alcista(cierres, altos, bajos, aperturas)
-    if info["Vela"]:
+    # Vela de fuerza alcista en 5m
+    vela = vela_alcista_fuerte(c5, h5, l5, o5)
+    flags["Vela"] = vela
+    if vela:
         s += 1
 
-    return s, info, r
+    # Stoch RSI cruzando al alza
+    stk, std = stoch_rsi(c5)
+    flags["StochRSI"] = round(stk, 1)
+    if stk > std and 20 < stk < 75:
+        s += 1
 
-# ================= SCORE SHORT =================
+    return max(s, 0), flags, r5
 
-def score_short(cierres, altos, bajos, volumenes, aperturas):
+def score_short(c5, h5, l5, v5, o5, c15, c1h):
     s = 0
-    info = {}
+    flags = {}
 
-    e9  = ema(cierres, 9)
-    e21 = ema(cierres, 21)
-    e50 = ema(cierres, 50)
-
-    info["EMA"] = e9[-1] < e21[-1] < e50[-1]
-    if info["EMA"]:
+    alin, e9, e21, e50 = _ema_alineado_short(c5)
+    flags["EMA-alin"] = alin
+    if alin:
         s += 3
 
-    slope_ok = e9[-1] < e9[-4] and e21[-1] < e21[-4]
-    info["Slope"] = slope_ok
-    if slope_ok:
+    e21_15 = ema(c15, 21)
+    slope15 = e21_15[-1] < e21_15[-5]
+    flags["Slope15"] = slope15
+    if slope15:
         s += 1
 
-    info["PB"] = detectar_pullback_short(cierres)
-    if info["PB"]:
+    e21_1h = ema(c1h, 21)
+    short_1h = c1h[-1] < e21_1h[-1]
+    flags["1h-bajista"] = short_1h
+    if short_1h:
+        s += 1
+
+    pb = pullback_short(c5, e9)
+    flags["Pullback"] = pb
+    if pb:
         s += 2
 
-    r = rsi(cierres)
-    info["RSI"] = r
-    if 35 <= r <= 58:
+    r5 = rsi(c5)
+    flags["RSI5m"] = round(r5, 1)
+    if 35 <= r5 <= 55:
         s += 2
-    elif r < 28:
+    elif r5 < 30:
         s -= 2
+    elif r5 > 60:
+        s -= 1
 
-    div_baj = divergencia_bajista(cierres)
-    info["DivBaj"] = div_baj
-    if div_baj:
+    div = divergencia_bajista(c5)
+    flags["DivBaj"] = div
+    if div:
         s += 2
 
-    linea, senal, hist_act, hist_prev = macd_completo(cierres)
-    info["MACD"] = linea < senal
-    if linea < senal:
+    lin5, sig5, hist5, hist5p = macd(c5)
+    flags["MACD"] = lin5 < sig5
+    if lin5 < sig5:
         s += 1
-    info["MACDhist"] = hist_act < 0 and hist_act < hist_prev
-    if hist_act < 0 and hist_act < hist_prev:
+    if hist5 < 0 and hist5 < hist5p:
+        flags["MACDacel"] = True
         s += 1
-
-    vr = volumen_relativo(volumenes)
-    info["Vol"] = vr
-    if vr >= 1.3:
-        s += 2
-    elif vr >= 1.1:
-        s += 1
-
-    obv_vals = obv(cierres, volumenes)
-    obv_baja = obv_vals[-1] < obv_vals[-5]
-    info["OBV"] = obv_baja
-    if obv_baja:
-        s += 1
-
-    bb_m, bb_sup, bb_inf = bollinger(cierres)
-    if cierres[-1] < bb_m and cierres[-2] >= bb_m:
-        s += 1
-        info["BB"] = "cruce"
-    elif cierres[-1] < bb_m:
-        info["BB"] = "bajo"
     else:
-        info["BB"] = "sobre"
+        flags["MACDacel"] = False
 
-    stk, std = stoch_rsi(cierres)
-    info["StochRSI"] = stk
-    if stk < std and 20 < stk < 80:
+    vr = vol_relativo(v5)
+    flags["Vol"] = round(vr, 2)
+    if vr >= 1.5:
+        s += 2
+    elif vr >= 1.2:
+        s += 1
+    elif vr < 0.8:
+        s -= 1
+
+    obv_vals = obv(c5, v5)
+    obv_ok = obv_vals[-1] < obv_vals[-6]
+    flags["OBV"] = obv_ok
+    if obv_ok:
         s += 1
 
-    info["Vela"] = patron_vela_bajista(cierres, altos, bajos, aperturas)
-    if info["Vela"] :
+    vela = vela_bajista_fuerte(c5, h5, l5, o5)
+    flags["Vela"] = vela
+    if vela:
         s += 1
 
-    return s, info, r
+    stk, std = stoch_rsi(c5)
+    flags["StochRSI"] = round(stk, 1)
+    if stk < std and 25 < stk < 80:
+        s += 1
 
-# ================= MULTITF =================
+    return max(s, 0), flags, r5
 
-def analizar_multitf(symbol):
-    c1m, a1m, b1m, v1m, ap1m = get_klines(symbol, "1m", 60)
-    c5m, a5m, b5m, v5m, ap5m = get_klines(symbol, "5m", 60)
-    c15m, _, _, _, _          = get_klines(symbol, "15m", 60)
+# ================= FILTRO BTC =================
 
-    e9_1m  = ema(c1m, 9)
-    e21_1m = ema(c1m, 21)
-    e9_5m  = ema(c5m, 9)
-    e21_5m = ema(c5m, 21)
-    e9_15m = ema(c15m, 9)
-    e21_15m= ema(c15m, 21)
+def contexto_btc():
+    """Retorna si BTC tiene tendencia clara (long/short/neutral) en 5m y 1h."""
+    c5, _, _, _, _  = get_klines("BTCUSDT", "5m", 60)
+    c1h, _, _, _, _ = get_klines("BTCUSDT", "1h", 60)
 
-    long_1m  = e9_1m[-1]  > e21_1m[-1]
-    long_5m  = e9_5m[-1]  > e21_5m[-1]
-    long_15m = e9_15m[-1] > e21_15m[-1]
+    e9_5  = ema(c5, 9)
+    e21_5 = ema(c5, 21)
+    e9_1h  = ema(c1h, 9)
+    e21_1h = ema(c1h, 21)
 
-    short_1m  = e9_1m[-1]  < e21_1m[-1]
-    short_5m  = e9_5m[-1]  < e21_5m[-1]
-    short_15m = e9_15m[-1] < e21_15m[-1]
+    btc_long  = e9_5[-1] > e21_5[-1] and e9_1h[-1] > e21_1h[-1]
+    btc_short = e9_5[-1] < e21_5[-1] and e9_1h[-1] < e21_1h[-1]
+    btc_rsi5  = rsi(c5)
 
-    bias_long  = long_1m and long_5m and long_15m
-    bias_short = short_1m and short_5m and short_15m
+    # Mercado lateral si EMAs muy juntas
+    diff = abs(e9_5[-1] - e21_5[-1]) / e21_5[-1]
+    btc_lateral = diff < 0.001
 
-    return bias_long, bias_short, c1m, a1m, b1m, v1m, ap1m, c15m
+    return btc_long, btc_short, btc_lateral, btc_rsi5
 
-# ================= RESUMEN ESTADÍSTICO =================
+# ================= RESUMEN =================
 
 def enviar_resumen():
-    wr = (operaciones_ganadoras / operaciones_totales * 100) if operaciones_totales > 0 else 0
-    msg = (
+    wr = (ops_ganadoras / ops_total * 100) if ops_total > 0 else 0.0
+    enviar_alerta(
         f"📊 <b>RESUMEN HORARIO</b>\n"
         f"⏰ {datetime.now().strftime('%H:%M:%S')}\n"
-        f"📋 Operaciones: {operaciones_totales}\n"
-        f"✅ Ganadoras: {operaciones_ganadoras}\n"
-        f"❌ Perdedoras: {operaciones_totales - operaciones_ganadoras}\n"
+        f"📋 Ops: {ops_total} | ✅ {ops_ganadoras} | ❌ {ops_total - ops_ganadoras}\n"
         f"🎯 Win Rate: {wr:.1f}%\n"
-        f"💵 PnL total: {pnl_total:+.4f}\n"
-        f"📈 Racha actual: {'🔴 ' + str(racha_perdidas) + ' pérdidas' if racha_perdidas > 0 else '🟢 ' + str(racha_ganancias) + ' ganancias'}"
+        f"💵 PnL total: {pnl_total:+.6f}\n"
+        f"{'🟢 Racha +' + str(racha_ganancias) if racha_ganancias else '🔴 Racha -' + str(racha_perdidas)}"
     )
-    enviar_alerta(msg)
 
 # ================= LOOP PRINCIPAL =================
+
 while True:
     try:
         ahora = time.time()
 
-        # ---- Resumen periódico ----
+        # Resumen periódico
         if ahora - ultimo_resumen >= RESUMEN_CADA:
             enviar_resumen()
             ultimo_resumen = ahora
 
-        # ================= GESTIÓN DE POSICIÓN ABIERTA =================
+        # ===== GESTIÓN DE POSICIÓN ABIERTA =====
         if estado:
-            cierres, altos, bajos, volumenes, aperturas = get_klines(symbol_activo, "1m", 30)
-            precio = cierres[-1]
-            atr_val = atr(altos, bajos, cierres)
-            r_actual = rsi(cierres)
+            c5, h5, l5, v5, o5 = get_klines(symbol_act, "5m", 30)
+            precio   = c5[-1]
+            atr_val  = atr(h5, l5, c5)
+            r_actual = rsi(c5)
 
             if direccion == "long":
-                ganancia    = precio - entrada
-                ganancia_pct = (ganancia / entrada) * 100
-
+                gan = precio - entrada
+                gan_pct = gan / entrada * 100
                 if precio > max_precio:
                     max_precio = precio
 
-                sl_estructura = min(cierres[-5:])
-                sl_atr        = entrada - 1.5 * atr_val
-                sl_maximo     = entrada - 0.002 * entrada
-                sl = max(sl_estructura, sl_atr, sl_maximo)
+                sl_e  = min(l5[-6:])
+                sl_a  = entrada - 1.5 * atr_val
+                sl_mx = entrada - 0.015 * entrada
+                sl    = max(sl_e, sl_a, sl_mx)
 
                 riesgo = entrada - sl
-                tp1 = entrada + riesgo * 1.5
-                tp2 = entrada + riesgo * 2.5
-                trailing_dist = (max_precio - entrada) * 0.45
+                tp1 = entrada + riesgo * MIN_RR
+                tp2 = entrada + riesgo * 3.0
+                trail_dist = (max_precio - entrada) * 0.45
 
                 salir = None
                 if precio <= sl:
                     salir = ("SL", "🛑")
                 elif precio >= tp2:
-                    salir = ("TP2", "💰")
-                elif precio >= tp1 and r_actual > 75:
+                    salir = ("TP2", "💰💰")
+                elif precio >= tp1 and r_actual > 73:
                     salir = ("TP1+RSI", "💰")
-                elif ganancia > 0 and max_precio - precio >= trailing_dist:
+                elif gan > 0 and (max_precio - precio) >= trail_dist:
                     salir = ("TRAILING", "💰")
                 elif r_actual > 82:
-                    salir = ("RSI-EXT", "⚡")
+                    salir = ("RSI-EXTREME", "⚡")
 
             else:  # short
-                ganancia    = entrada - precio
-                ganancia_pct = (ganancia / entrada) * 100
-
+                gan = entrada - precio
+                gan_pct = gan / entrada * 100
                 if precio < min_precio:
                     min_precio = precio
 
-                sl_estructura = max(cierres[-5:])
-                sl_atr        = entrada + 1.5 * atr_val
-                sl_maximo     = entrada + 0.002 * entrada
-                sl = min(sl_estructura, sl_atr, sl_maximo)
+                sl_e  = max(h5[-6:])
+                sl_a  = entrada + 1.5 * atr_val
+                sl_mx = entrada + 0.015 * entrada
+                sl    = min(sl_e, sl_a, sl_mx)
 
                 riesgo = sl - entrada
-                tp1 = entrada - riesgo * 1.5
-                tp2 = entrada - riesgo * 2.5
-                trailing_dist = (entrada - min_precio) * 0.45
+                tp1 = entrada - riesgo * MIN_RR
+                tp2 = entrada - riesgo * 3.0
+                trail_dist = (entrada - min_precio) * 0.45
 
                 salir = None
                 if precio >= sl:
                     salir = ("SL", "🛑")
                 elif precio <= tp2:
-                    salir = ("TP2", "💰")
-                elif precio <= tp1 and r_actual < 25:
+                    salir = ("TP2", "💰💰")
+                elif precio <= tp1 and r_actual < 27:
                     salir = ("TP1+RSI", "💰")
-                elif ganancia > 0 and precio - min_precio >= trailing_dist:
+                elif gan > 0 and (precio - min_precio) >= trail_dist:
                     salir = ("TRAILING", "💰")
                 elif r_actual < 18:
-                    salir = ("RSI-EXT", "⚡")
+                    salir = ("RSI-EXTREME", "⚡")
 
             if salir:
-                tipo_salida, emoji = salir
-                es_ganadora = ganancia > 0
+                tipo, emoji = salir
+                es_win = gan > 0
+                ops_total    += 1
+                pnl_total    += gan
 
-                operaciones_totales += 1
-                pnl_total += ganancia
-
-                if es_ganadora:
-                    operaciones_ganadoras += 1
+                if es_win:
+                    ops_ganadoras  += 1
                     racha_ganancias += 1
-                    racha_perdidas = 0
-                    ganancia_acumulada += ganancia
+                    racha_perdidas  = 0
+                    gan_acumulada  += gan
                 else:
-                    racha_perdidas += 1
+                    racha_perdidas  += 1
                     racha_ganancias = 0
 
-                wr = (operaciones_ganadoras / operaciones_totales * 100)
-                dir_emoji = "📈" if direccion == "long" else "📉"
-
-                msg = (
-                    f"{emoji} <b>{tipo_salida} — {symbol_activo}</b> {dir_emoji}\n"
-                    f"Precio: {precio:.4f}\n"
-                    f"PnL: {'+' if ganancia > 0 else ''}{ganancia:.4f} ({ganancia_pct:+.3f}%)\n"
-                    f"RSI: {r_actual:.1f} | WR acum: {wr:.1f}%\n"
-                    f"PnL total: {pnl_total:+.4f}"
+                wr = ops_ganadoras / ops_total * 100
+                dir_e = "📈" if direccion == "long" else "📉"
+                enviar_alerta(
+                    f"{emoji} <b>{tipo} — {symbol_act}</b> {dir_e}\n"
+                    f"Precio: {precio:.5f}\n"
+                    f"PnL: {gan:+.5f} ({gan_pct:+.3f}%)\n"
+                    f"RSI: {r_actual:.1f} | WR: {wr:.1f}%\n"
+                    f"PnL acum: {pnl_total:+.5f}"
                 )
-                enviar_alerta(msg)
 
-                cooldowns[symbol_activo] = time.time()
-                estado = False
-                symbol_activo = None
-                direccion = None
+                cooldowns[symbol_act] = time.time()
+                estado    = False
+                symbol_act = None
+                direccion  = None
 
-            time.sleep(5)
+            time.sleep(15)
             continue
 
-        # ================= PROTECCIONES =================
-        if ganancia_acumulada >= 5:
-            enviar_alerta("🛑 <b>PROTECCIÓN DE GANANCIA</b>\nPausa 2 min")
-            time.sleep(120)
-            ganancia_acumulada = 0
+        # ===== PROTECCIONES =====
+        if gan_acumulada >= 3:
+            enviar_alerta("🛑 <b>PROTECCIÓN DE GANANCIA</b>\nPausa 3 min")
+            time.sleep(180)
+            gan_acumulada = 0
             continue
 
         if racha_perdidas >= 2:
-            enviar_alerta(f"⛔ <b>PAUSA POR RACHA</b>\n{racha_perdidas} pérdidas seguidas")
-            time.sleep(90)
+            enviar_alerta(f"⛔ <b>PAUSA POR RACHA NEGATIVA</b>\n{racha_perdidas} ops perdidas seguidas")
+            time.sleep(120)
             racha_perdidas = 0
             continue
 
-        # ================= FILTRO DE SESIÓN =================
+        # ===== FILTRO DE SESIÓN =====
         if not sesion_activa():
-            time.sleep(30)
+            time.sleep(60)
             continue
 
         peso = peso_sesion()
-        score_min_long  = SCORE_MIN_LONG  + (1 if peso < 0.8 else 0)
-        score_min_short = SCORE_MIN_SHORT + (1 if peso < 0.8 else 0)
+        score_req = SCORE_MIN + (1 if peso < 0.8 else 0)
 
-        # ================= FILTRO BTC MULTI-TF =================
-        btc_long, btc_short, btc_1m, _, _, _, _, btc_15m = analizar_multitf("BTCUSDT")
-        btc_rsi = rsi(btc_1m)
-        regimen_btc = detectar_regimen(btc_15m)
+        # ===== CONTEXTO BTC =====
+        btc_long, btc_short, btc_lateral, btc_rsi5 = contexto_btc()
 
-        if regimen_btc == "LATERAL":
-            time.sleep(10)
+        if btc_lateral:
+            time.sleep(20)
             continue
+
+        if btc_rsi5 > 82 and btc_long:
+            # BTC sobrecomprado — evitar longs nuevos
+            btc_long = False
+
+        if btc_rsi5 < 18 and btc_short:
+            # BTC sobrevendido — evitar shorts nuevos
+            btc_short = False
 
         mejor_long  = None
         mejor_short = None
-        score_top_long  = 0
-        score_top_short = 0
+        top_long    = 0
+        top_short   = 0
 
-        # ================= SCAN =================
-        for symbol in symbols:
+        # ===== SCAN DE MERCADO =====
+        for symbol in SYMBOLS:
             try:
-                # Cooldown por símbolo
                 if symbol in cooldowns and time.time() - cooldowns[symbol] < COOLDOWN_SYMBOL:
                     continue
 
-                bias_long, bias_short, c1m, a1m, b1m, v1m, ap1m, c15m = analizar_multitf(symbol)
+                c5,  h5,  l5,  v5,  o5  = get_klines(symbol, "5m",  80)
+                c15, h15, l15, v15, o15 = get_klines(symbol, "15m", 60)
+                c1h, h1h, l1h, v1h, o1h = get_klines(symbol, "1h",  60)
 
-                precio = c1m[-1]
-                atr_val = atr(a1m, b1m, c1m)
+                precio   = c5[-1]
+                atr_val  = atr(h5, l5, c5)
 
-                if atr_val < precio * 0.0003:
+                # Filtro ATR absoluto
+                atr_pct = atr_val / precio
+                if atr_pct < MIN_ATR_PCT or atr_pct > MAX_ATR_PCT:
                     continue
 
-                # ---- LONG ----
-                if btc_long and bias_long:
-                    s, info, r = score_long(c1m, a1m, b1m, v1m, ap1m)
-                    if s > score_top_long:
-                        score_top_long = s
-                        mejor_long = (symbol, precio, c1m, a1m, b1m, v1m, ap1m, info, r)
+                # --- LONG ---
+                if btc_long:
+                    sl_e  = min(l5[-6:])
+                    sl_a  = precio - 1.5 * atr_val
+                    sl_mx = precio - 0.012 * precio
+                    sl    = max(sl_e, sl_a, sl_mx)
 
-                # ---- SHORT ----
-                if btc_short and bias_short:
-                    s, info, r = score_short(c1m, a1m, b1m, v1m, ap1m)
-                    if s > score_top_short:
-                        score_top_short = s
-                        mejor_short = (symbol, precio, c1m, a1m, b1m, v1m, ap1m, info, r)
+                    ok, motivo = viabilidad_entry(precio, sl, atr_val, "long")
+                    if ok:
+                        s, flags, r = score_long(c5, h5, l5, v5, o5, c15, c1h)
+                        if s >= score_req and s > top_long:
+                            top_long   = s
+                            mejor_long = (symbol, precio, c5, h5, l5, v5, o5, flags, r, sl)
+
+                # --- SHORT ---
+                if btc_short:
+                    sl_e  = max(h5[-6:])
+                    sl_a  = precio + 1.5 * atr_val
+                    sl_mx = precio + 0.012 * precio
+                    sl    = min(sl_e, sl_a, sl_mx)
+
+                    ok, motivo = viabilidad_entry(precio, sl, atr_val, "short")
+                    if ok:
+                        s, flags, r = score_short(c5, h5, l5, v5, o5, c15, c1h)
+                        if s >= score_req and s > top_short:
+                            top_short   = s
+                            mejor_short = (symbol, precio, c5, h5, l5, v5, o5, flags, r, sl)
 
             except Exception:
                 continue
 
-        # ================= ENTRADA LONG =================
-        if mejor_long and score_top_long >= score_min_long:
-            symbol_t, precio_t, c1m, a1m, b1m, v1m, ap1m, info, r = mejor_long
+        # ===== ENTRADA LONG =====
+        def abrir_posicion(sym, precio, c5, h5, l5, v5, o5, flags, r, sl, direc):
+            global estado, direccion, entrada, max_precio, min_precio, symbol_act
 
-            atr_val = atr(a1m, b1m, c1m)
-            sl_e  = min(c1m[-5:])
-            sl_a  = precio_t - 1.5 * atr_val
-            sl_mx = precio_t - 0.002 * precio_t
-            sl    = max(sl_e, sl_a, sl_mx)
-            riesgo = precio_t - sl
+            atr_val = atr(h5, l5, c5)
+            riesgo  = abs(precio - sl)
+            tp1     = precio + riesgo * MIN_RR  if direc == "long" else precio - riesgo * MIN_RR
+            tp2     = precio + riesgo * 3.0     if direc == "long" else precio - riesgo * 3.0
+            rr_str  = f"1:{MIN_RR:.1f} → 1:3.0"
+            tam     = calcular_tamano(precio, sl)
+            dir_e   = "📈" if direc == "long" else "📉"
+            sl_lbl  = "SL" if direc == "long" else "SL"
 
-            if riesgo <= 0 or riesgo > 0.003 * precio_t:
-                time.sleep(5)
-                continue
-
-            tp1 = precio_t + riesgo * 1.5
-            tp2 = precio_t + riesgo * 2.5
-            rr  = riesgo * 2.5 / riesgo
-            tam = calcular_tamano(precio_t, sl)
-
-            symbol_activo = symbol_t
-            entrada       = precio_t
-            max_precio    = entrada
-            min_precio    = entrada
-            estado        = True
-            direccion     = "long"
-
-            flags = []
-            for k, v in info.items():
+            flag_list = []
+            for k, v in flags.items():
                 if v is True:
-                    flags.append(f"{k}✅")
+                    flag_list.append(f"{k}✅")
                 elif v is False:
-                    flags.append(f"{k}❌")
+                    flag_list.append(f"{k}❌")
+                elif isinstance(v, (int, float)):
+                    flag_list.append(f"{k}:{v}")
 
-            msg = (
-                f"🚀 <b>LONG — {symbol_activo}</b>\n"
-                f"💵 Entrada: {entrada:.4f}\n"
-                f"🎯 Score: {score_top_long}/18\n"
-                f"📉 SL: {sl:.4f}\n"
-                f"🎯 TP1: {tp1:.4f}  TP2: {tp2:.4f}\n"
-                f"📊 R:R = 1:{rr:.1f} | RSI: {r:.1f}\n"
-                f"📦 Tamaño ref: {tam} unidades\n"
-                f"🕐 Sesión: {peso*100:.0f}%\n"
-                f"🔍 {' | '.join(flags[:6])}"
+            symbol_act = sym
+            entrada    = precio
+            max_precio = precio
+            min_precio = precio
+            estado     = True
+            direccion  = direc
+
+            score_val = top_long if direc == "long" else top_short
+            enviar_alerta(
+                f"{'🚀' if direc == 'long' else '🔻'} <b>{'LONG' if direc == 'long' else 'SHORT'} — {sym}</b> {dir_e}\n"
+                f"💵 Entrada: {precio:.5f}\n"
+                f"🎯 Score: {score_val}/18 (req {score_req})\n"
+                f"📉 {sl_lbl}: {sl:.5f}  ({abs(precio-sl)/precio*100:.3f}%)\n"
+                f"🎯 TP1: {tp1:.5f} | TP2: {tp2:.5f}\n"
+                f"📊 R:R {rr_str} | RSI: {r:.1f}\n"
+                f"📦 Tamaño ref: {tam} u | Sesión: {peso*100:.0f}%\n"
+                f"🔍 {' '.join(flag_list[:7])}"
             )
-            enviar_alerta(msg)
 
-        # ================= ENTRADA SHORT =================
-        elif mejor_short and score_top_short >= score_min_short:
-            symbol_t, precio_t, c1m, a1m, b1m, v1m, ap1m, info, r = mejor_short
+        if mejor_long:
+            sym, precio, c5, h5, l5, v5, o5, flags, r, sl = mejor_long
+            abrir_posicion(sym, precio, c5, h5, l5, v5, o5, flags, r, sl, "long")
 
-            atr_val = atr(a1m, b1m, c1m)
-            sl_e  = max(c1m[-5:])
-            sl_a  = precio_t + 1.5 * atr_val
-            sl_mx = precio_t + 0.002 * precio_t
-            sl    = min(sl_e, sl_a, sl_mx)
-            riesgo = sl - precio_t
+        elif mejor_short:
+            sym, precio, c5, h5, l5, v5, o5, flags, r, sl = mejor_short
+            abrir_posicion(sym, precio, c5, h5, l5, v5, o5, flags, r, sl, "short")
 
-            if riesgo <= 0 or riesgo > 0.003 * precio_t:
-                time.sleep(5)
-                continue
-
-            tp1 = precio_t - riesgo * 1.5
-            tp2 = precio_t - riesgo * 2.5
-            rr  = riesgo * 2.5 / riesgo
-            tam = calcular_tamano(precio_t, sl)
-
-            symbol_activo = symbol_t
-            entrada       = precio_t
-            min_precio    = entrada
-            max_precio    = entrada
-            estado        = True
-            direccion     = "short"
-
-            flags = []
-            for k, v in info.items():
-                if v is True:
-                    flags.append(f"{k}✅")
-                elif v is False:
-                    flags.append(f"{k}❌")
-
-            msg = (
-                f"📉 <b>SHORT — {symbol_activo}</b>\n"
-                f"💵 Entrada: {entrada:.4f}\n"
-                f"🎯 Score: {score_top_short}/18\n"
-                f"📈 SL: {sl:.4f}\n"
-                f"🎯 TP1: {tp1:.4f}  TP2: {tp2:.4f}\n"
-                f"📊 R:R = 1:{rr:.1f} | RSI: {r:.1f}\n"
-                f"📦 Tamaño ref: {tam} unidades\n"
-                f"🕐 Sesión: {peso*100:.0f}%\n"
-                f"🔍 {' | '.join(flags[:6])}"
-            )
-            enviar_alerta(msg)
-
-        time.sleep(5)
+        time.sleep(20)
 
     except Exception as e:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {e}")
-        time.sleep(5)
+        time.sleep(10)
