@@ -48,8 +48,9 @@ def enviar_alerta(msg):
 
 # ================= CONFIG =================
 # OKX usa guion: BTC-USDT, ETH-USDT, etc.
-symbols = ["BTC-USDT", "ETH-USDT", "BNB-USDT", "SOL-USDT", "ADA-USDT", "XRP-USDT",
-           "DOGE-USDT", "AVAX-USDT", "LINK-USDT", "DOT-USDT", "POL-USDT", "LTC-USDT"]
+# Pares seleccionados por mejor WR histórico. DOGE eliminado (peor en backtest).
+symbols = ["BTC-USDT", "ETH-USDT", "BNB-USDT", "SOL-USDT", "ADA-USDT",
+           "AVAX-USDT", "LINK-USDT", "LTC-USDT", "DOT-USDT", "POL-USDT"]
 
 estado = False
 entrada = 0.0
@@ -406,7 +407,7 @@ while True:
                 continue
 
         # ===== ENTRADA =====
-        if mejor and mejor_score >= 7:
+        if mejor and mejor_score >= 9:
             sym, prec, c1m, a1m, b1m, v1m = mejor
             atr_v = atr(a1m, b1m, c1m)
 
