@@ -1,7 +1,36 @@
 import requests
 import time
 import math
+import os
+import sys
 from datetime import datetime
+
+# ================= INSTANCIA ÚNICA =================
+LOCK_FILE = "/tmp/bot_trading.lock"
+
+def verificar_instancia_unica():
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE) as f:
+                pid_viejo = int(f.read().strip())
+            # Verifica si el proceso sigue activo
+            os.kill(pid_viejo, 0)
+            print(f"[LOCK] Bot ya corriendo (PID {pid_viejo}). Saliendo.")
+            sys.exit(1)
+        except (ProcessLookupError, ValueError):
+            pass  # Proceso muerto, continúa
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+import atexit
+def liberar_lock():
+    try:
+        os.remove(LOCK_FILE)
+    except:
+        pass
+
+atexit.register(liberar_lock)
+verificar_instancia_unica()
 
 # ================= TELEGRAM =================
 TOKEN = "8772294732:AAGU62SChVJfmwf9RpweG-inBGAjIDlMwms"
@@ -387,7 +416,9 @@ while True:
             sl = max(sl_est, sl_atr, sl_max)
 
             riesgo = prec - sl
-            if riesgo <= 0 or riesgo > (0.003 * prec):
+            riesgo_pct = riesgo / prec
+            # Mínimo 0.08% y máximo 0.3% de riesgo — evita micro-SLs en DOGE/POL/ADA
+            if riesgo <= 0 or riesgo_pct < 0.0008 or riesgo_pct > 0.003:
                 time.sleep(5)
                 continue
 
